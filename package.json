@@ -1,0 +1,34 @@
+{
+  "name": "crawlbot",
+  "version": "3.0.0",
+  "description": "VesselFinder regional vessel scanner — TypeScript + Clean Architecture",
+  "main": "dist/interfaces/http/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "ts-node src/interfaces/http/server.ts",
+    "get": "ts-node src/interfaces/cli/getVessel.ts",
+    "crawl": "ts-node src/interfaces/cli/crawlOnce.ts",
+    "scan": "ts-node src/interfaces/cli/scanArea.ts",
+    "audit": "ts-node src/interfaces/cli/auditData.ts",
+    "check-drift": "ts-node src/interfaces/cli/detectHtmlDrift.ts",
+    "test": "node -r ts-node/register --test \"src/**/*.test.ts\"",
+    "reset-indexes": "ts-node src/interfaces/cli/resetIndexes.ts",
+    "start:prod": "node dist/interfaces/http/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "ioredis": "^5.11.1",
+    "mongoose": "^9.7.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.0"
+  },
+  "license": "MIT"
+}
