@@ -80,7 +80,16 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Helper dựng HTML CÓ ESCAPE — dùng chung với test src/interfaces/http/publicRendering.test.ts -->
+<script src="render.js"></script>
 <script>
+// Mọi hàm dựng HTML nằm ở render.js: giá trị upstream luôn qua escapeHtml(),
+// góc xoay luôn qua safeCourse() -> không có đường chèn HTML/JS từ dữ liệu tàu.
+const {
+  keyOf, vesselColor, isMoving,
+  popupHtml, renderVesselRow, shipIconSvg, legendHtml,
+} = window.CrawlBotRender;
+
 // Data cập nhật mỗi 6–12h -> không cần refresh dày. 60s đủ để bắt vòng scan mới.
 const REFRESH_MS = 60000;
 const MAX_MARKERS = 3000; // trần marker/khung nhìn -> trình duyệt luôn mượt
@@ -101,108 +110,15 @@ let autoRefresh = true;
 let refreshTimer = null;
 let activeKey = null;
 
-function keyOf(p){ return p.mmsi || p.imo || `${p.lat},${p.lon}`; }
-
-// Category đầy đủ theo kiểu VesselFinder/MarineTraffic — MỌI tàu đều rơi vào
-// đúng 1 category có màu riêng thật, KHÔNG dùng xám cho "chưa rõ loại".
-// key: cụm từ khớp (không phân biệt hoa/thường) trong field `type` của Vessel.
-const TYPE_COLORS = [
-  { match: /tanker|oil|chemical|gas|lng|lpg/i,          color: '#ef4444', label: 'Tanker' },
-  { match: /cargo|container|bulk|general|reefer/i,      color: '#f59e0b', label: 'Cargo' },
-  { match: /passenger|cruise|ferry/i,                   color: '#a855f7', label: 'Passenger' },
-  { match: /fishing/i,                                  color: '#ec4899', label: 'Fishing' },
-  { match: /tug|pilot|dredg|offshore|supply|anti.?poll/i, color: '#14b8a6', label: 'Tug / Special craft' },
-  { match: /pleasure|yacht|sail/i,                      color: '#22c55e', label: 'Pleasure craft' },
-  { match: /high.?speed/i,                              color: '#eab308', label: 'High speed craft' },
-  { match: /military|law.?enforce|patrol/i,             color: '#3b82f6', label: 'Military / Law enforcement' },
-  { match: /search and rescue|sar/i,                    color: '#f97316', label: 'Search and rescue' },
-];
-// Catch-all cho type lạ/không khớp category nào -> "Other" có màu THẬT riêng
-// (không xám), KHÔNG phụ thuộc tàu đang chạy hay dừng.
-const OTHER_CATEGORY = { color: '#8b5cf6', label: 'Other / chưa xác định' };
-
-function classifyType(type){
-  if (!type) return OTHER_CATEGORY;
-  return TYPE_COLORS.find((t) => t.match.test(type)) ?? OTHER_CATEGORY;
-}
-
-function vesselColor(p){
-  return classifyType(p.type).color;
-}
-
-// 3 dạng icon, phân biệt rõ "biết hướng" vs "không biết hướng" (không phải
-// mất data — COG vô nghĩa khi tàu đứng yên, VesselFinder cũng không có):
-//   - Neo đậu (navStatusText xác nhận)      -> chấm tròn viền đậm
-//   - Có course/heading THẬT                -> tam giác xoay đúng hướng
-//   - Đứng yên / chưa rõ hướng (còn lại)    -> hình thoi (không xoay theo hướng nào)
+// Icon Leaflet lấy SVG từ render.js (đã chặn góc xoay rác) rồi bọc divIcon.
 function shipIcon(p){
-  const color = vesselColor(p);
-  const anchored = p.navStatusText && /anchor/i.test(p.navStatusText);
-  const courseDeg = Number.isFinite(p.courseDeg) ? p.courseDeg : (Number.isFinite(p.headingDeg) ? p.headingDeg : null);
-
-  if (anchored) {
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
-        <circle cx="9" cy="9" r="6" fill="${color}" stroke="#0b1420" stroke-width="2"/>
-      </svg>`;
-    return L.divIcon({ className: 'ship-icon', html: svg, iconSize: [18, 18], iconAnchor: [9, 9] });
-  }
-
-  if (courseDeg === null) {
-    // Chấm tròn viền MỎNG — đứng yên/chưa rõ hướng (khác chấm tròn viền ĐẬM
-    // của trạng thái neo đậu đã xác nhận ở trên).
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
-        <circle cx="9" cy="9" r="6" fill="${color}" stroke="rgba(11,20,32,.5)" stroke-width="1"/>
-      </svg>`;
-    return L.divIcon({ className: 'ship-icon', html: svg, iconSize: [18, 18], iconAnchor: [9, 9] });
-  }
-
-  // Tam giác thon dài — mũi nhọn hướng lên, xoay theo course/heading THẬT.
-  // Giống dáng icon tàu AIS của VesselFinder: hẹp ngang, dài dọc.
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="30" viewBox="0 0 22 30"
-         style="transform:rotate(${courseDeg}deg)">
-      <polygon points="11,0 20,28 2,28" fill="${color}" stroke="#0b1420" stroke-width="1.2" stroke-linejoin="round"/>
-    </svg>`;
-  return L.divIcon({ className: 'ship-icon', html: svg, iconSize: [22, 30], iconAnchor: [11, 15] });
-}
-
-function isMoving(p){
-  return typeof p.speedKn === 'number' && p.speedKn > 0.5;
-}
-
-function statusBadge(p){
-  if (isMoving(p)) return '<span class="badge moving">Đang chạy</span>';
-  if (p.navStatusText && /anchor/i.test(p.navStatusText)) return '<span class="badge anchored">Neo đậu</span>';
-  return '<span class="badge stopped">Dừng</span>';
-}
-
-function fmt(v, unit){
-  if (v === null || v === undefined || v === '') return '—';
-  return unit ? `${v} ${unit}` : v;
-}
-
-function popupHtml(p){
-  return `
-    <div class="popup">
-      <h3>${p.name || p.imo || p.mmsi || 'Không rõ tên'}</h3>
-      <table>
-        <tr><td>IMO</td><td class="v">${fmt(p.imo)}</td></tr>
-        <tr><td>MMSI</td><td class="v">${fmt(p.mmsi)}</td></tr>
-        <tr><td>Loại tàu</td><td class="v">${fmt(p.type)}${p.country ? ` (${p.country})` : ''}</td></tr>
-        <tr><td>Hiệu hô</td><td class="v">${fmt(p.callsign)}</td></tr>
-        <tr><td>Kích thước</td><td class="v">${p.lengthM || p.widthM ? `${fmt(p.lengthM)} / ${fmt(p.widthM)} m` : '—'}</td></tr>
-        <tr><td>Mớn nước</td><td class="v">${fmt(p.draughtM, 'm')}</td></tr>
-        <tr><td>Tốc độ</td><td class="v">${fmt(p.speedKn, 'kn')}</td></tr>
-        <tr><td>Hướng</td><td class="v">${fmt(p.courseDeg, '°')}</td></tr>
-        <tr><td>Trạng thái</td><td class="v">${fmt(p.navStatusText)}</td></tr>
-        <tr><td>Đích đến</td><td class="v">${fmt(p.destination)}</td></tr>
-        <tr><td>ETA</td><td class="v">${fmt(p.eta)}</td></tr>
-        <tr><td>Vị trí lúc</td><td class="v">${fmt(p.positionTime)}</td></tr>
-        <tr><td>Nguồn</td><td class="v">${fmt(p.source)}${p.latLonApproximate ? ' (toạ độ gần đúng)' : ''}</td></tr>
-      </table>
-    </div>`;
+  const icon = shipIconSvg(p);
+  return L.divIcon({
+    className: 'ship-icon',
+    html: icon.html,
+    iconSize: icon.size,
+    iconAnchor: icon.anchor,
+  });
 }
 
 function renderList(positions){
@@ -230,13 +146,7 @@ function renderList(positions){
     const k = keyOf(p);
     const row = document.createElement('div');
     row.className = 'vrow' + (k === activeKey ? ' active' : '');
-    row.innerHTML = `
-      <div class="name">${p.name || p.imo || p.mmsi || 'Không rõ'}</div>
-      <div class="meta">
-        <span style="color:${vesselColor(p)}">● ${classifyType(p.type).label}</span>
-        <span>${fmt(p.speedKn, 'kn')}</span>
-        ${statusBadge(p)}
-      </div>`;
+    row.innerHTML = renderVesselRow(p);
     row.addEventListener('click', () => focusVessel(k));
     listEl.appendChild(row);
   });
@@ -312,13 +222,9 @@ function renderMarkers(positions){
 }
 
 function renderLegend(){
-  const items = [
-    ...TYPE_COLORS.map((t) => ({ color: t.color, label: t.label })),
-    OTHER_CATEGORY,
-  ];
-  document.getElementById('legend').innerHTML = items
-    .map((i) => `<div class="item"><span class="dot" style="background:${i.color}"></span>${i.label}</div>`)
-    .join('');
+  // Legend là dữ liệu TĨNH của developer (màu + nhãn category), không có giá
+  // trị upstream -> an toàn khi gán innerHTML.
+  document.getElementById('legend').innerHTML = legendHtml();
 }
 renderLegend();
 

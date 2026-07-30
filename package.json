@@ -9,6 +9,7 @@
     "get": "ts-node src/interfaces/cli/getVessel.ts",
     "crawl": "ts-node src/interfaces/cli/crawlOnce.ts",
     "scan": "ts-node src/interfaces/cli/scanArea.ts",
+    "enrich": "ts-node src/interfaces/cli/enrichTypes.ts",
     "audit": "ts-node src/interfaces/cli/auditData.ts",
     "check-drift": "ts-node src/interfaces/cli/detectHtmlDrift.ts",
     "test": "node -r ts-node/register --test \"src/**/*.test.ts\"",

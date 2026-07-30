@@ -13,13 +13,16 @@ import { VesselPosition } from "../../domain/entities/VesselPosition";
 export class JsonFileVesselRepository implements IVesselRepository {
   private readonly vesselsFile: string;
   private readonly positionsFile: string;
+  private readonly latestPositionsFile: string;
 
   constructor(dataDir: string) {
     this.vesselsFile = path.join(dataDir, "vessels.json");
     this.positionsFile = path.join(dataDir, "positions.json");
+    this.latestPositionsFile = path.join(dataDir, "latest_positions.json");
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     this.ensure(this.vesselsFile, {});
     this.ensure(this.positionsFile, []);
+    this.migrateLegacyLatestPositions();
   }
 
   async saveVessel(vessel: Vessel): Promise<void> {
@@ -32,41 +35,30 @@ export class JsonFileVesselRepository implements IVesselRepository {
     const positions = this.read<VesselPosition[]>(this.positionsFile);
     positions.push(position);
     this.write(this.positionsFile, positions);
+    this.upsertLatest(position);
   }
 
   async savePositionLatest(position: VesselPosition): Promise<void> {
-    const key = position.mmsi; // KHÓA = MMSI
-    const positions = this.read<VesselPosition[]>(this.positionsFile);
-    // Bỏ bản cũ của tàu này (nếu có) rồi thêm bản mới -> luôn 1 record/tàu.
-    const kept = positions.filter((p) => p.mmsi !== key);
-    kept.push(position);
-    this.write(this.positionsFile, kept);
+    this.upsertLatest(position);
   }
 
   async getLatestPosition(mmsi: string): Promise<VesselPosition | null> {
-    const positions = this.read<VesselPosition[]>(this.positionsFile);
-    const mine = positions.filter((p) => p.mmsi === String(mmsi));
-    if (mine.length === 0) return null;
-    return mine.sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1))[0];
+    return this.read<VesselPosition[]>(this.latestPositionsFile).find((p) => p.mmsi === String(mmsi)) ?? null;
   }
 
-  async getAllLatestPositions(): Promise<VesselPosition[]> {
-    const positions = this.read<VesselPosition[]>(this.positionsFile);
-    const latest: Record<string, VesselPosition> = {};
-    for (const p of positions) {
-      const key = p.mmsi ?? "?";
-      if (!latest[key] || latest[key].receivedAt < p.receivedAt) {
-        latest[key] = p;
-      }
-    }
-    return Object.values(latest);
+  async getAllLatestPositions(freshSince?: Date): Promise<VesselPosition[]> {
+    const all = this.read<VesselPosition[]>(this.latestPositionsFile);
+    if (!freshSince) return all;
+    const cutoff = freshSince.toISOString();
+    return all.filter((p) => p.receivedAt >= cutoff);
   }
 
   async getLatestPositionsInBbox(
     box: import("../../application/ports/Geo").BoundingBox,
-    limit: number
+    limit: number,
+    freshSince?: Date
   ): Promise<VesselPosition[]> {
-    const all = await this.getAllLatestPositions();
+    const all = await this.getAllLatestPositions(freshSince);
     return all
       .filter(
         (p) =>
@@ -101,6 +93,17 @@ export class JsonFileVesselRepository implements IVesselRepository {
     return vessels.find((v) => v.mmsi === mmsi) ?? null;
   }
 
+  /** Xoá map state đã hết hạn khỏi latest_positions.json, giữ nguyên history. */
+  async deleteLatestPositionsOlderThan(cutoff: Date): Promise<number> {
+    const iso = cutoff.toISOString();
+    const positions = this.read<VesselPosition[]>(this.latestPositionsFile);
+    const kept = positions.filter((p) => p.receivedAt >= iso);
+    const removed = positions.length - kept.length;
+    // Chỉ ghi map state khi thực sự có bản ghi bị xoá; history luôn giữ nguyên.
+    if (removed > 0) this.write(this.latestPositionsFile, kept);
+    return removed;
+  }
+
   async deleteVesselAndPositions(mmsi: string): Promise<void> {
     const vessels = this.read<Record<string, unknown>>(this.vesselsFile);
     delete vessels[mmsi];
@@ -111,9 +114,32 @@ export class JsonFileVesselRepository implements IVesselRepository {
       this.positionsFile,
       positions.filter((p) => p.mmsi !== mmsi)
     );
+    this.write(
+      this.latestPositionsFile,
+      this.read<VesselPosition[]>(this.latestPositionsFile).filter((p) => p.mmsi !== mmsi)
+    );
   }
 
   // ---- tiện ích file (private) ----
+  /** Migrate legacy history thành snapshot latest mà không sửa positions.json. */
+  private migrateLegacyLatestPositions(): void {
+    if (fs.existsSync(this.latestPositionsFile)) return;
+    const latest = new Map<string, VesselPosition>();
+    for (const position of this.read<VesselPosition[]>(this.positionsFile)) {
+      const key = position.mmsi ?? "?";
+      const current = latest.get(key);
+      if (!current || current.receivedAt < position.receivedAt) latest.set(key, position);
+    }
+    this.write(this.latestPositionsFile, [...latest.values()]);
+  }
+
+  private upsertLatest(position: VesselPosition): void {
+    const positions = this.read<VesselPosition[]>(this.latestPositionsFile);
+    const kept = positions.filter((p) => p.mmsi !== position.mmsi);
+    kept.push(position);
+    this.write(this.latestPositionsFile, kept);
+  }
+
   private ensure(file: string, initial: unknown): void {
     if (!fs.existsSync(file)) this.write(file, initial);
   }

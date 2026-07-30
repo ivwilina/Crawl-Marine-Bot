@@ -2,8 +2,8 @@
 //  INTERFACE (CLI) · Enrich: bổ sung type/flag cho tàu quét từ mp2 (chỉ mmsi)
 // ----------------------------------------------------------------------------
 //  Chạy:  npm run enrich        (Ctrl+C để dừng)
-//  Tự động chạy nền khi `npm start` rồi -> chỉ cần dùng CLI này nếu muốn chạy
-//  RIÊNG (không kèm Express server), ví dụ để enrich nhanh 1 lần rồi tắt.
+//  Đây là WORKER RIÊNG: `npm start` KHÔNG tự chạy enrich. Cố ý như vậy để số
+//  request gửi lên upstream luôn đoán được — muốn enrich thì phải chạy lệnh này.
 // ============================================================================
 
 import { buildContainer } from "../../container";

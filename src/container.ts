@@ -24,6 +24,7 @@ import { CrawlFleetPositions } from "./application/use-cases/CrawlFleetPositions
 import { ScanArea } from "./application/use-cases/ScanArea";
 import { ManageWatchlist } from "./application/use-cases/ManageWatchlist";
 import { EnrichVesselTypes } from "./application/use-cases/EnrichVesselTypes";
+import { CleanupStalePositions } from "./application/use-cases/CleanupStalePositions";
 import { IVesselRepository } from "./application/ports/IVesselRepository";
 import { IWatchlistRepository } from "./application/ports/IWatchlistRepository";
 
@@ -36,6 +37,7 @@ export interface Container {
   scanArea: ScanArea;
   manageWatchlist: ManageWatchlist;
   enrichVesselTypes: EnrichVesselTypes;
+  cleanupStalePositions: CleanupStalePositions;
 }
 
 export async function buildContainer(): Promise<Container> {
@@ -75,7 +77,12 @@ export async function buildContainer(): Promise<Container> {
   }
 
   // 2) Lắp vào use case
-  const getVesselDetails = new GetVesselDetails({ detailsSource, repository, cache });
+  const getVesselDetails = new GetVesselDetails({
+    detailsSource,
+    repository,
+    cache,
+    cacheTtlMs: config.cacheTtlMs,
+  });
   const crawlFleetPositions = new CrawlFleetPositions({
     detailsSource,
     repository,
@@ -102,6 +109,11 @@ export async function buildContainer(): Promise<Container> {
     delayMs: config.enrichDelayMs,
     intervalMs: config.enrichIntervalMs,
   });
+  // Dọn vị trí map hết hạn: chỉ latest_positions, giữ lý lịch + lịch sử.
+  const cleanupStalePositions = new CleanupStalePositions({
+    repo: repository,
+    staleAfterMs: config.positionStaleAfterMs,
+  });
 
   return {
     config,
@@ -112,5 +124,6 @@ export async function buildContainer(): Promise<Container> {
     scanArea,
     manageWatchlist,
     enrichVesselTypes,
+    cleanupStalePositions,
   };
 }

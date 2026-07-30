@@ -17,6 +17,8 @@ export const Errors = {
     new AppError("E-1001", `Không tìm thấy tàu id=${id}`),
   INVALID_ID: (id: string | number) =>
     new AppError("E-1003", `ID không hợp lệ (cần IMO 7 số hoặc MMSI 9 số): ${id}`),
+  /** Thiếu/sai header X-API-Key. Thông điệp cố tình KHÔNG tiết lộ chi tiết. */
+  UNAUTHORIZED: () => new AppError("E-1004", "Unauthorized"),
   SCRAPE_BLOCKED: () => new AppError("E-2001", "Bị VesselFinder chặn (HTTP 403)"),
   SCRAPE_PARSE_FAIL: (msg: string) =>
     new AppError("E-2002", `Không bóc được dữ liệu: ${msg}`),
@@ -24,3 +26,22 @@ export const Errors = {
     new AppError("E-2003", "VesselFinder không phản hồi kịp (timeout)"),
   SOURCE_ERROR: (msg: string) => new AppError("E-2002", `Lỗi nguồn dữ liệu: ${msg}`),
 };
+
+/**
+ * Map mã lỗi nghiệp vụ -> HTTP status. Chỉ lỗi upstream/hệ thống mới là 502;
+ * lỗi do người gọi (input sai, thiếu khoá) phải trả 4xx để không giả vờ là
+ * sự cố phía nguồn.
+ */
+export function errorStatus(err: unknown): number {
+  const code = (err as { code?: unknown } | null)?.code;
+  switch (code) {
+    case "E-1003":
+      return 400;
+    case "E-1004":
+      return 401;
+    case "E-1001":
+      return 404;
+    default:
+      return 502;
+  }
+}

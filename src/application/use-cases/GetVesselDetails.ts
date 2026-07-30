@@ -14,14 +14,20 @@ export interface GetVesselDetailsDeps {
   detailsSource: IVesselDetailsSource;
   repository: IVesselRepository;
   cache: ICache;
+  /** TTL cache (ms) — lấy từ CACHE_TTL_MS. Bỏ trống -> 60s theo BR-07. */
+  cacheTtlMs?: number;
 }
 
 export type GetVesselResult = VesselDetails & { fromCache: boolean };
 
-export class GetVesselDetails {
-  private readonly CACHE_TTL_MS = 60 * 1000; // BR-07: cache 60s
+const DEFAULT_CACHE_TTL_MS = 60 * 1000; // BR-07: cache 60s
 
-  constructor(private readonly deps: GetVesselDetailsDeps) {}
+export class GetVesselDetails {
+  private readonly cacheTtlMs: number;
+
+  constructor(private readonly deps: GetVesselDetailsDeps) {
+    this.cacheTtlMs = deps.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
+  }
 
   async execute(id: string): Promise<GetVesselResult> {
     // Bước 0: validate (7–9 chữ số = IMO hoặc MMSI)
@@ -44,7 +50,7 @@ export class GetVesselDetails {
     await this.deps.repository.savePosition(details.position);
 
     // Bước 4: cache + trả về
-    await this.deps.cache.set(cacheKey, details, this.CACHE_TTL_MS);
+    await this.deps.cache.set(cacheKey, details, this.cacheTtlMs);
     return { ...details, fromCache: false };
   }
 }

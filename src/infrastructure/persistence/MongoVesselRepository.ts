@@ -51,16 +51,23 @@ export class MongoVesselRepository implements IVesselRepository {
     return doc ? MongoVesselRepository.toEntity(doc) : null;
   }
 
-  async getAllLatestPositions(): Promise<VesselPosition[]> {
+  async getAllLatestPositions(freshSince?: Date): Promise<VesselPosition[]> {
     // 1 doc/tàu sẵn -> chỉ cần find(), KHÔNG aggregation nặng như trước.
-    const docs = await LatestPositionModel.find().lean<LatestPositionDoc[]>().exec();
+    const docs = await LatestPositionModel.find(MongoVesselRepository.freshFilter(freshSince))
+      .lean<LatestPositionDoc[]>()
+      .exec();
     return docs.map((d) => MongoVesselRepository.toEntity(d));
   }
 
-  async getLatestPositionsInBbox(box: BoundingBox, limit: number): Promise<VesselPosition[]> {
+  async getLatestPositionsInBbox(
+    box: BoundingBox,
+    limit: number,
+    freshSince?: Date
+  ): Promise<VesselPosition[]> {
     // $geoWithin $box trên index 2d -> chỉ lấy tàu trong khung nhìn, giới hạn
     // số lượng để trình duyệt không nghẽn. [lon,lat] theo thứ tự của index 2d.
     const docs = await LatestPositionModel.find({
+      ...MongoVesselRepository.freshFilter(freshSince),
       loc: {
         $geoWithin: {
           $box: [
@@ -74,6 +81,17 @@ export class MongoVesselRepository implements IVesselRepository {
       .lean<LatestPositionDoc[]>()
       .exec();
     return docs.map((d) => MongoVesselRepository.toEntity(d));
+  }
+
+  /**
+   * Xoá map-state hết hạn. CHỈ collection latest_positions: lý lịch tàu
+   * (vessels) và lịch sử lộ trình (positions) giữ nguyên.
+   */
+  async deleteLatestPositionsOlderThan(cutoff: Date): Promise<number> {
+    const result = await LatestPositionModel.deleteMany({
+      receivedAt: { $lt: cutoff.toISOString() },
+    });
+    return result.deletedCount ?? 0;
   }
 
   async getAllVessels(): Promise<Vessel[]> {
@@ -109,6 +127,14 @@ export class MongoVesselRepository implements IVesselRepository {
       PositionModel.deleteMany({ mmsi }),
       LatestPositionModel.deleteOne({ mmsi }),
     ]);
+  }
+
+  /**
+   * receivedAt lưu dạng ISO string -> so sánh chuỗi ISO là so sánh thời gian
+   * (cùng độ dài, cùng UTC "Z"). Không truyền freshSince -> không lọc.
+   */
+  private static freshFilter(freshSince?: Date): Record<string, unknown> {
+    return freshSince ? { receivedAt: { $gte: freshSince.toISOString() } } : {};
   }
 
   private static docToVessel(d: VesselDoc): Vessel {

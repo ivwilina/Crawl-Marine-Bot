@@ -17,12 +17,26 @@ export interface IVesselRepository {
    */
   savePositionLatest(position: VesselPosition): Promise<void>;
   getLatestPosition(mmsi: string): Promise<VesselPosition | null>;
-  getAllLatestPositions(): Promise<VesselPosition[]>;
+  /**
+   * @param freshSince  chỉ trả bản ghi có receivedAt >= mốc này (bỏ vị trí đã
+   *                    hết hạn). Không truyền -> trả tất cả.
+   */
+  getAllLatestPositions(freshSince?: Date): Promise<VesselPosition[]>;
   /**
    * Vị trí mới nhất của các tàu TRONG khung nhìn (bbox) — dùng cho bản đồ,
    * chỉ trả tối đa `limit` tàu để trình duyệt không nghẽn ở quy mô 1M.
+   * `freshSince` lọc vị trí hết hạn giống getAllLatestPositions.
    */
-  getLatestPositionsInBbox(box: BoundingBox, limit: number): Promise<VesselPosition[]>;
+  getLatestPositionsInBbox(
+    box: BoundingBox,
+    limit: number,
+    freshSince?: Date
+  ): Promise<VesselPosition[]>;
+  /**
+   * Xoá các bản ghi VỊ TRÍ MỚI NHẤT (map-state) có receivedAt < cutoff và trả
+   * về số bản ghi đã xoá. KHÔNG xoá lý lịch tàu, KHÔNG xoá lịch sử lộ trình.
+   */
+  deleteLatestPositionsOlderThan(cutoff: Date): Promise<number>;
   /** Lý lịch (type, flagCode...) của mọi tàu đã biết — dùng để hiển thị icon theo loại tàu. */
   getAllVessels(): Promise<Vessel[]>;
   /** Lý lịch của 1 tập mmsi cụ thể — join nhanh cho các tàu trong viewport. */
