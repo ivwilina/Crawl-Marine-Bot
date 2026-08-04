@@ -14,7 +14,10 @@ const vesselSchema = new Schema(
   {
     mmsi: { type: String, required: true, unique: true, index: true },
     imo: { type: String, index: true, sparse: true },
-    name: String,
+    // Có index để sắp theo tên và tra tên chính xác. Lưu ý: tìm prefix KHÔNG
+    // phân biệt hoa thường (findVesselsByName) vẫn phải scan — MongoDB không
+    // dùng index cho regex `i`.
+    name: { type: String, index: true },
     type: String,
     callsign: String,
     flagCode: String,

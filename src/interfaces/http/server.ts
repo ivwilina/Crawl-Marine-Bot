@@ -2,9 +2,11 @@
 //  INTERFACE (HTTP) · Bootstrap: dựng app (createApp) + listen + scheduler
 // ----------------------------------------------------------------------------
 //  Chạy:  npm start
-//  API:
+//  API (chỉ dữ liệu JSON — không có giao diện, không phục vụ file tĩnh):
 //    GET /health         -> kiểm tra server sống (không cần khoá)
 //    GET /positions      -> vị trí mới nhất, CÒN TƯƠI (không cần khoá)
+//    GET /nearby         -> tàu lân cận từ dữ liệu đã crawl (không cần khoá)
+//    GET /vessels?name=  -> tìm tàu theo tên (không cần khoá)
 //    GET /vessel/:id     -> chi tiết 1 tàu (IMO/MMSI, có cache) — cần X-API-Key
 //    /watchlist*         -> xem/thêm/xoá tàu tracking       — cần X-API-Key
 //  Bind mặc định 127.0.0.1: muốn public thì đặt reverse proxy có xác thực ở
@@ -13,7 +15,6 @@
 //  (worker riêng: `npm run enrich`) để tải upstream luôn đoán được.
 // ============================================================================
 
-import path from "path";
 import { buildContainer } from "../../container";
 import { IntervalScheduler } from "../../infrastructure/scheduler/IntervalScheduler";
 import { createApp } from "./createApp";
@@ -42,14 +43,14 @@ async function start(): Promise<void> {
     repository,
     apiKey: config.apiKey,
     positionStaleAfterMs: config.positionStaleAfterMs,
-    staticDir: path.join(__dirname, "../../../public"),
   });
 
   app.listen(config.httpPort, config.httpHost, () => {
     console.log(`✅ Express server: http://${config.httpHost}:${config.httpPort}`);
-    console.log(`   • / (giao diện bản đồ tàu)`);
     console.log(`   • /health`);
     console.log(`   • /positions`);
+    console.log(`   • /nearby?mmsi=257123000&radius=3`);
+    console.log(`   • /vessels?name=maersk`);
     console.log(`   • /vessel/9811983      (cần header X-API-Key)`);
     console.log(`   • /watchlist           (cần header X-API-Key)`);
   });

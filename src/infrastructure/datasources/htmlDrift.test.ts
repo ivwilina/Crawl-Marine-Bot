@@ -9,18 +9,35 @@ import assert from "node:assert/strict";
 import { analyzeHtml } from "./htmlDrift";
 
 // ── Fixture: trang HTML "tốt" — có đủ selector mapper cần ──────────────────
+//  Hai bảng n3/v3 giống trang thật (kiểm chứng trên IMO 9384198): Voyage Data
+//  rồi Vessel Particulars, cùng dữ liệu nhưng nhãn khác nhau.
 const GOOD_HTML = `
 <html><body>
   <h1 class="title">EVER GIVEN</h1>
   <div id="djson" data-json='{"mmsi":353136000,"imo":9811000,"ship_lat":31.2,"ship_lon":32.3,"ship_cog":180,"ship_sog":12.5}'></div>
   <table>
-    <tr><td class="n3">IMO / MMSI</td><td class="v3">9811000 / 353136000</td></tr>
-    <tr><td class="n3">Length / Beam</td><td class="v3">399 / 59 m</td></tr>
+    <tr><td class="n3">Destination</td><td class="v3">EGSUZ</td></tr>
+    <tr><td class="n3">ETA</td><td class="v3">Aug 10, 02:00 (in 5 days)</td></tr>
+    <tr><td class="n3">Course / Speed</td><td class="v3">180 / 12.5 kn</td></tr>
     <tr><td class="n3">Current draught</td><td class="v3">14.5 m</td></tr>
-    <tr><td class="n3">AIS Type</td><td class="v3">Cargo</td></tr>
-    <tr><td class="n3">Callsign</td><td class="v3">H3RC</td></tr>
-    <tr><td class="n3">AIS Flag</td><td class="v3">Panama</td></tr>
     <tr><td class="n3">Navigation Status</td><td class="v3">Under way</td></tr>
+    <tr><td class="n3">Position received</td><td class="v3">1 min ago</td></tr>
+    <tr><td class="n3">IMO / MMSI</td><td class="v3">9811000 / 353136000</td></tr>
+    <tr><td class="n3">Callsign</td><td class="v3">H3RC</td></tr>
+    <tr><td class="n3">AIS Type</td><td class="v3">Cargo</td></tr>
+    <tr><td class="n3">AIS Flag</td><td class="v3">Panama</td></tr>
+    <tr><td class="n3">Length / Beam</td><td class="v3">399 / 59 m</td></tr>
+  </table>
+  <table>
+    <tr><td class="n3">IMO number</td><td class="v3">9811000</td></tr>
+    <tr><td class="n3">Vessel Name</td><td class="v3">EVER GIVEN</td></tr>
+    <tr><td class="n3">Ship Type</td><td class="v3">Container Ship</td></tr>
+    <tr><td class="n3">Flag</td><td class="v3">Panama</td></tr>
+    <tr><td class="n3">Year of Build</td><td class="v3">2018</td></tr>
+    <tr><td class="n3">Length Overall (m)</td><td class="v3">399.00</td></tr>
+    <tr><td class="n3">Beam (m)</td><td class="v3">58.80</td></tr>
+    <tr><td class="n3">Gross Tonnage</td><td class="v3">220,940</td></tr>
+    <tr><td class="n3">Deadweight (t)</td><td class="v3">199,489</td></tr>
   </table>
 </body></html>`;
 

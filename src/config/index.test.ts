@@ -22,8 +22,21 @@ test("defaults the HTTP host to loopback and leaves the API key empty", () => {
   const config = loadConfig({});
   assert.equal(config.httpHost, "127.0.0.1");
   assert.equal(config.apiKey, "");
-  assert.equal(config.positionStaleAfterMs, 24 * 60 * 60 * 1000);
+  // Phải lớn hơn 1 vòng quét (15-30h) — xem ghi chú trong config/index.ts.
+  assert.equal(config.positionStaleAfterMs, 72 * 60 * 60 * 1000);
   assert.equal(config.positionCleanupEveryMs, 60 * 60 * 1000);
+});
+
+test("defaults the scan pace to 4 tiles per 60s and a 20-tile write batch", () => {
+  const config = loadConfig({});
+  assert.equal(config.scanTileDeg, 9);
+  assert.equal(config.scanConcurrency, 4);
+  assert.equal(config.scanChunkDelayMs, 60_000);
+  assert.equal(config.scanFlushEveryTiles, 20);
+});
+
+test("rejects a scan concurrency above the allowed ceiling", () => {
+  assert.throws(() => loadConfig({ SCAN_CONCURRENCY: "64" }), /SCAN_CONCURRENCY/);
 });
 
 test("reads HTTP host and API key from the environment", () => {

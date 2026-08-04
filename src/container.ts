@@ -82,6 +82,7 @@ export async function buildContainer(): Promise<Container> {
     repository,
     cache,
     cacheTtlMs: config.cacheTtlMs,
+    storeMaxAgeMs: config.detailsStoreMaxAgeMs,
   });
   const crawlFleetPositions = new CrawlFleetPositions({
     detailsSource,
@@ -92,11 +93,11 @@ export async function buildContainer(): Promise<Container> {
   const scanArea = new ScanArea({
     mapSource,
     repository,
-    minMs: config.scanMinMs,
-    maxMs: config.scanMaxMs,
+    concurrency: config.scanConcurrency,
+    chunkDelayMs: config.scanChunkDelayMs,
+    flushEveryTiles: config.scanFlushEveryTiles,
+    cycleDelayMs: config.scanCycleDelayMs,
     zoom: config.scanZoom,
-    tileDelayMinMs: config.scanTileDelayMinMs,
-    tileDelayMaxMs: config.scanTileDelayMaxMs,
     subdivideThreshold: config.scanSubdivideThreshold,
     minTileDeg: config.scanMinTileDeg,
     blockCooldownMs: config.scanBlockCooldownMs,

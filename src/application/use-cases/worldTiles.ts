@@ -31,6 +31,39 @@ export function generateWorldTiles(tileDeg: number): BoundingBox[] {
   return tiles;
 }
 
+/**
+ * Cắt 1 vùng cấu hình thành lưới ô ~tileDeg×tileDeg.
+ *
+ * Nạp bbox thô vào scanner là tự bắn vào chân: vùng bờ Đông Mỹ rộng 23° sẽ phải
+ * chia nhỏ tới 5 tầng (23→11.5→5.75→2.9→1.4), worst case 1365 request cho MỘT
+ * vùng. Cắt sẵn về 9° thì tầng chia tối đa còn 4 và số request đoán được.
+ *
+ * Lưới bám mốc tuyệt đối (…-9, 0, 9…) chứ không bám cạnh vùng, nên 2 vùng chồng
+ * nhau sinh ra đúng cùng một ô — quét lại cùng toạ độ, buffer dedupe theo mmsi
+ * lo phần trùng.
+ */
+export function tilesForBox(box: BoundingBox, tileDeg: number): BoundingBox[] {
+  const step = Math.max(1, tileDeg);
+  const snap = (value: number) => Math.floor(value / step) * step;
+
+  const minLat = Math.max(snap(box.minLat), -LAT_LIMIT);
+  const minLon = Math.max(snap(box.minLon), -LON_LIMIT);
+  const tiles: BoundingBox[] = [];
+
+  for (let lat = minLat; lat < box.maxLat && lat < LAT_LIMIT; lat += step) {
+    for (let lon = minLon; lon < box.maxLon && lon < LON_LIMIT; lon += step) {
+      tiles.push({
+        minLat: lat,
+        minLon: lon,
+        maxLat: Math.min(lat + step, LAT_LIMIT),
+        maxLon: Math.min(lon + step, LON_LIMIT),
+      });
+    }
+  }
+
+  return tiles;
+}
+
 /** Chia 1 ô thành 4 ô con (khi ô trả về quá nhiều tàu = có thể bị cắt bớt). */
 export function splitBox(box: BoundingBox): BoundingBox[] {
   const midLat = (box.minLat + box.maxLat) / 2;

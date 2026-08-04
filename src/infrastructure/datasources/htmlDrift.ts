@@ -31,8 +31,11 @@ export const CHECKS: Check[] = [
   },
 ];
 
-// Label bên trong bảng mà mapper tra cứu theo key.
+// Label bên trong bảng mà mapper tra cứu theo key. Đã kiểm chứng trên trang
+// thật (IMO 9384198). Mapper có nhãn dự phòng cho vài field, nên nhãn thiếu
+// không phải lúc nào cũng là hỏng — báo ra để người xem quyết.
 export const LABELS = [
+  // Bảng Voyage Data
   "IMO / MMSI",
   "Length / Beam",
   "Current draught",
@@ -40,6 +43,17 @@ export const LABELS = [
   "Callsign",
   "AIS Flag",
   "Navigation Status",
+  "Destination",
+  "ETA",
+  "Position received",
+  // Bảng Vessel Particulars
+  "Ship Type",
+  "Flag",
+  "Year of Build",
+  "Gross Tonnage",
+  "Deadweight (t)",
+  "Length Overall (m)",
+  "Beam (m)",
 ];
 
 export interface DriftResult {

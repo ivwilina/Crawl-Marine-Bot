@@ -21,17 +21,28 @@ export interface AppConfig {
   /** Khoá bắt buộc cho các route ghi/gọi upstream (header X-API-Key). */
   apiKey: string;
   cacheTtlMs: number;
+  /**
+   * Bản ghi đã crawl cũ hơn ngần này thì GET /vessel/:id gọi lại upstream thay
+   * vì trả từ kho.
+   */
+  detailsStoreMaxAgeMs: number;
   /** Vị trí mới nhất cũ hơn ngần này ms bị coi là hết hạn (không trả về nữa). */
   positionStaleAfterMs: number;
   /** Chu kỳ dọn vị trí mới nhất đã hết hạn. */
   positionCleanupEveryMs: number;
   crawlEveryMs: number;
   crawlDelayMs: number;
-  scanMinMs: number;
-  scanMaxMs: number;
+  /** Kích thước ô của lưới quét toàn cầu (độ). 9° -> đúng 760 ô. */
+  scanTileDeg: number;
+  /** Số ô fetch song song mỗi lượt. */
+  scanConcurrency: number;
+  /** Nghỉ giữa 2 lượt quét (chống ban). */
+  scanChunkDelayMs: number;
+  /** Gom bao nhiêu ô thì ghi DB 1 lần (bulk). */
+  scanFlushEveryTiles: number;
+  /** Nghỉ giữa 2 vòng quét hết lưới. */
+  scanCycleDelayMs: number;
   scanZoom: number;
-  scanTileDelayMinMs: number; // nghỉ giữa 2 ô (chống ban)
-  scanTileDelayMaxMs: number;
   scanSubdivideThreshold: number; // ô >= ngần này tàu -> chia 4
   scanMinTileDeg: number; // ngừng chia khi ô nhỏ hơn
   scanBlockCooldownMs: number; // bị chặn -> nghỉ dài
@@ -114,18 +125,26 @@ export function loadConfig(env: Env = process.env): AppConfig {
     // Không có mặc định: server HTTP tự từ chối khởi động nếu để trống.
     apiKey: str(env, "API_KEY"),
     cacheTtlMs: positiveNum(env, "CACHE_TTL_MS", 60_000),
+    // Crawler là nguồn chính: tàu đã enrich và còn tươi thì trả từ kho, không
+    // gọi lại VesselFinder.
+    detailsStoreMaxAgeMs: positiveNum(env, "DETAILS_STORE_MAX_AGE_MS", 30 * 60 * 1000),
     // Vị trí map cũ hơn ngần này -> ẩn khỏi API và bị dọn khỏi latest_positions.
-    positionStaleAfterMs: positiveNum(env, "POSITION_STALE_AFTER_MS", 24 * 60 * 60 * 1000),
+    // PHẢI lớn hơn thời gian 1 vòng quét (760 ô + chia nhỏ, 60s/lượt: 15-30h),
+    // nếu không tàu bị dọn trước khi vòng sau quét lại tới nó.
+    positionStaleAfterMs: positiveNum(env, "POSITION_STALE_AFTER_MS", 72 * 60 * 60 * 1000),
     positionCleanupEveryMs: positiveNum(env, "POSITION_CLEANUP_EVERY_MS", 60 * 60 * 1000),
     crawlEveryMs: positiveNum(env, "CRAWL_EVERY_MS", 2 * 60 * 60 * 1000),
     crawlDelayMs: nonNegativeNum(env, "CRAWL_DELAY_MS", 1500),
     // Scanner refreshes at a fixed, low operational frequency. It is not an
     // access-control bypass and must remain disabled if the source forbids use.
-    scanMinMs: positiveNum(env, "SCAN_INTERVAL_MS", 6 * 60 * 60 * 1000),
-    scanMaxMs: positiveNum(env, "SCAN_INTERVAL_MS", 6 * 60 * 60 * 1000),
+    // 9° -> đúng 760 ô phủ toàn cầu (19 hàng lat × 40 cột lon, giới hạn ±84°).
+    scanTileDeg: num(env, "SCAN_TILE_DEG", 9, { min: 1, max: 90 }),
+    // 4 ô/lượt và 60s/lượt giữ nhịp trung bình 1 request/15s.
+    scanConcurrency: num(env, "SCAN_CONCURRENCY", 4, { min: 1, max: 16 }),
+    scanChunkDelayMs: nonNegativeNum(env, "SCAN_CHUNK_DELAY_MS", 60_000),
+    scanFlushEveryTiles: positiveNum(env, "SCAN_FLUSH_EVERY_TILES", 20),
+    scanCycleDelayMs: positiveNum(env, "SCAN_INTERVAL_MS", 6 * 60 * 60 * 1000),
     scanZoom: num(env, "SCAN_ZOOM", 9, { min: 0, max: 22 }),
-    scanTileDelayMinMs: nonNegativeNum(env, "SCAN_TILE_DELAY_MS", 15_000),
-    scanTileDelayMaxMs: nonNegativeNum(env, "SCAN_TILE_DELAY_MS", 15_000),
     scanSubdivideThreshold: positiveNum(env, "SCAN_SUBDIVIDE_THRESHOLD", 400),
     scanMinTileDeg: num(env, "SCAN_MIN_TILE_DEG", 1, { min: 0.01, max: 180 }),
     scanBlockCooldownMs: positiveNum(env, "SCAN_BLOCK_COOLDOWN_MS", 15 * 60 * 1000),

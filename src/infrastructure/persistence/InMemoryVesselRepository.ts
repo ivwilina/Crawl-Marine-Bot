@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { IVesselRepository } from "../../application/ports/IVesselRepository";
-import { BoundingBox } from "../../application/ports/Geo";
+import { BoundingBox, distanceNm } from "../../application/ports/Geo";
 import { Vessel } from "../../domain/entities/Vessel";
 import { VesselPosition } from "../../domain/entities/VesselPosition";
 
@@ -27,6 +27,55 @@ export class InMemoryVesselRepository implements IVesselRepository {
   async savePositionLatest(position: VesselPosition): Promise<void> {
     if (position.mmsi === null) return;
     this.latest.set(position.mmsi, position);
+  }
+
+  /** Cùng ngữ nghĩa với Mongo: lý lịch chỉ điền khi tạo mới, chỉ `name` cập nhật. */
+  async upsertVesselsFromScan(vessels: Vessel[]): Promise<number> {
+    let written = 0;
+
+    for (const vessel of vessels) {
+      const existing = this.vessels.get(vessel.mmsi);
+      if (!existing) {
+        this.vessels.set(vessel.mmsi, vessel);
+        written += 1;
+        continue;
+      }
+      // Tên "rỗng" từ mp2 chính là mmsi -> không đè lên tên thật.
+      const isRealName = Boolean(vessel.name) && vessel.name !== vessel.mmsi;
+      if (isRealName && vessel.name !== existing.name) {
+        this.vessels.set(vessel.mmsi, new Vessel({ ...existing, name: vessel.name }));
+        written += 1;
+      }
+    }
+
+    return written;
+  }
+
+  /** Chỉ toạ độ/nguồn/receivedAt; course/speed/navStatus đã enrich được giữ lại. */
+  async savePositionsFromScan(positions: VesselPosition[]): Promise<number> {
+    let written = 0;
+
+    for (const position of positions) {
+      if (position.mmsi === null) continue;
+      const existing = this.latest.get(position.mmsi);
+      this.latest.set(
+        position.mmsi,
+        existing
+          ? new VesselPosition({
+              ...existing,
+              imo: position.imo ?? existing.imo,
+              lat: position.lat,
+              lon: position.lon,
+              source: position.source,
+              latLonApproximate: position.latLonApproximate,
+              receivedAt: position.receivedAt,
+            })
+          : position
+      );
+      written += 1;
+    }
+
+    return written;
   }
 
   async getLatestPosition(mmsi: string): Promise<VesselPosition | null> {
@@ -55,6 +104,21 @@ export class InMemoryVesselRepository implements IVesselRepository {
       .slice(0, limit);
   }
 
+  /** Lọc bằng haversine — không có index địa lý nên tính thẳng từng bản ghi. */
+  async getLatestPositionsNearby(
+    center: { lat: number; lon: number },
+    radiusNm: number,
+    limit: number,
+    freshSince?: Date
+  ): Promise<VesselPosition[]> {
+    return (await this.getAllLatestPositions(freshSince))
+      .filter((p) => {
+        if (p.lat === null || p.lon === null) return false;
+        return distanceNm(center, { lat: p.lat, lon: p.lon }) <= radiusNm;
+      })
+      .slice(0, limit);
+  }
+
   async deleteLatestPositionsOlderThan(cutoff: Date): Promise<number> {
     const iso = cutoff.toISOString();
     let removed = 0;
@@ -80,8 +144,25 @@ export class InMemoryVesselRepository implements IVesselRepository {
     return [...this.vessels.values()].filter((v) => !v.type).slice(0, limit);
   }
 
+  async findVesselsByName(prefix: string, limit: number): Promise<Vessel[]> {
+    const query = prefix.trim().toUpperCase();
+    if (query.length < 3) return [];
+
+    return [...this.vessels.values()]
+      .filter((v) => (v.name ?? "").toUpperCase().startsWith(query))
+      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
+      .slice(0, limit);
+  }
+
   async findVesselByMmsi(mmsi: string): Promise<Vessel | null> {
     return this.vessels.get(String(mmsi)) ?? null;
+  }
+
+  async findVesselByImoOrMmsi(id: string): Promise<Vessel | null> {
+    const key = String(id).trim();
+    return (
+      this.vessels.get(key) ?? [...this.vessels.values()].find((v) => v.imo === key) ?? null
+    );
   }
 
   async deleteVesselAndPositions(mmsi: string): Promise<void> {

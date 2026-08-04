@@ -7,6 +7,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { IVesselRepository } from "../../application/ports/IVesselRepository";
+import { distanceNm } from "../../application/ports/Geo";
 import { Vessel } from "../../domain/entities/Vessel";
 import { VesselPosition } from "../../domain/entities/VesselPosition";
 
@@ -42,6 +43,64 @@ export class JsonFileVesselRepository implements IVesselRepository {
     this.upsertLatest(position);
   }
 
+  /**
+   * Cả mẻ trong 1 lần đọc + 1 lần ghi file (thay vì đọc/ghi mỗi tàu). Ngữ nghĩa
+   * giống Mongo: lý lịch chỉ điền khi tạo mới, chỉ `name` được cập nhật.
+   */
+  async upsertVesselsFromScan(vessels: Vessel[]): Promise<number> {
+    const stored = this.read<Record<string, Record<string, unknown>>>(this.vesselsFile);
+    const now = new Date().toISOString();
+    let written = 0;
+
+    for (const vessel of vessels) {
+      const existing = stored[vessel.mmsi];
+      if (!existing) {
+        stored[vessel.mmsi] = { ...vessel, updatedAt: now };
+        written += 1;
+        continue;
+      }
+      // Tên "rỗng" từ mp2 chính là mmsi -> không đè lên tên thật.
+      const isRealName = Boolean(vessel.name) && vessel.name !== vessel.mmsi;
+      if (isRealName && vessel.name !== existing.name) {
+        stored[vessel.mmsi] = { ...existing, name: vessel.name, updatedAt: now };
+        written += 1;
+      }
+    }
+
+    if (written > 0) this.write(this.vesselsFile, stored);
+    return written;
+  }
+
+  /** Cả mẻ trong 1 lần đọc + 1 lần ghi; giữ nguyên course/speed đã enrich. */
+  async savePositionsFromScan(positions: VesselPosition[]): Promise<number> {
+    const stored = this.read<VesselPosition[]>(this.latestPositionsFile);
+    const byMmsi = new Map(stored.map((p) => [p.mmsi, p]));
+    let written = 0;
+
+    for (const position of positions) {
+      if (position.mmsi === null) continue;
+      const existing = byMmsi.get(position.mmsi);
+      byMmsi.set(
+        position.mmsi,
+        existing
+          ? new VesselPosition({
+              ...existing,
+              imo: position.imo ?? existing.imo,
+              lat: position.lat,
+              lon: position.lon,
+              source: position.source,
+              latLonApproximate: position.latLonApproximate,
+              receivedAt: position.receivedAt,
+            })
+          : position
+      );
+      written += 1;
+    }
+
+    if (written > 0) this.write(this.latestPositionsFile, [...byMmsi.values()]);
+    return written;
+  }
+
   async getLatestPosition(mmsi: string): Promise<VesselPosition | null> {
     return this.read<VesselPosition[]>(this.latestPositionsFile).find((p) => p.mmsi === String(mmsi)) ?? null;
   }
@@ -72,6 +131,31 @@ export class JsonFileVesselRepository implements IVesselRepository {
       .slice(0, limit);
   }
 
+  /** Lọc bằng haversine — file JSON không có index địa lý. */
+  async getLatestPositionsNearby(
+    center: { lat: number; lon: number },
+    radiusNm: number,
+    limit: number,
+    freshSince?: Date
+  ): Promise<VesselPosition[]> {
+    return (await this.getAllLatestPositions(freshSince))
+      .filter((p) => {
+        if (p.lat === null || p.lon === null) return false;
+        return distanceNm(center, { lat: p.lat, lon: p.lon }) <= radiusNm;
+      })
+      .slice(0, limit);
+  }
+
+  async findVesselsByName(prefix: string, limit: number): Promise<Vessel[]> {
+    const query = prefix.trim().toUpperCase();
+    if (query.length < 3) return [];
+
+    return (await this.getAllVessels())
+      .filter((v) => (v.name ?? "").toUpperCase().startsWith(query))
+      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
+      .slice(0, limit);
+  }
+
   async getAllVessels(): Promise<Vessel[]> {
     const vessels = this.read<Record<string, Record<string, unknown>>>(this.vesselsFile);
     return Object.values(vessels).map(
@@ -91,6 +175,12 @@ export class JsonFileVesselRepository implements IVesselRepository {
   async findVesselByMmsi(mmsi: string): Promise<Vessel | null> {
     const vessels = await this.getAllVessels();
     return vessels.find((v) => v.mmsi === mmsi) ?? null;
+  }
+
+  async findVesselByImoOrMmsi(id: string): Promise<Vessel | null> {
+    const key = String(id).trim();
+    const vessels = await this.getAllVessels();
+    return vessels.find((v) => v.mmsi === key || v.imo === key) ?? null;
   }
 
   /** Xoá map state đã hết hạn khỏi latest_positions.json, giữ nguyên history. */
