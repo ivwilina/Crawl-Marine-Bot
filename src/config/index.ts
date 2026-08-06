@@ -49,6 +49,12 @@ export interface AppConfig {
   enrichBatchSize: number;
   enrichDelayMs: number;
   enrichIntervalMs: number;
+  /** Khoá aisstream.io. Rỗng -> KHÔNG bật AIS (nguồn phụ, không bắt buộc). */
+  aisApiKey: string;
+  /** Chu kỳ ghi DB của AIS ingest. */
+  aisFlushEveryMs: number;
+  /** Ghi ngay khi buffer AIS đạt ngần này bản ghi. */
+  aisFlushMaxSize: number;
   watchlist: string[];
   scanBoundingBoxes: BoundingBox[];
 }
@@ -121,7 +127,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
     redisUrl: str(env, "REDIS_URL"),
     // Mặc định chỉ nghe loopback: muốn public thì đặt reverse proxy phía trước.
     httpHost: str(env, "HTTP_HOST", "127.0.0.1"),
-    httpPort: num(env, "PORT", 3000, { min: 1, max: 65535 }),
+    // 3100, KHÔNG phải 3000: soosky-marine-api nghe 3000, và hai tiến trình này
+    // thường chạy cùng máy — trùng cổng thì một trong hai chết vì EADDRINUSE.
+    httpPort: num(env, "PORT", 3100, { min: 1, max: 65535 }),
     // Không có mặc định: server HTTP tự từ chối khởi động nếu để trống.
     apiKey: str(env, "API_KEY"),
     cacheTtlMs: positiveNum(env, "CACHE_TTL_MS", 60_000),
@@ -153,6 +161,10 @@ export function loadConfig(env: Env = process.env): AppConfig {
     enrichBatchSize: nonNegativeNum(env, "ENRICH_BATCH_SIZE", 15),
     enrichDelayMs: nonNegativeNum(env, "ENRICH_DELAY_MS", 2000),
     enrichIntervalMs: positiveNum(env, "ENRICH_INTERVAL_MS", 5 * 60 * 1000),
+    // AIS là nguồn PHỤ: không có khoá thì cả hệ vẫn chạy bằng crawl.
+    aisApiKey: str(env, "AIS_API_KEY"),
+    aisFlushEveryMs: positiveNum(env, "AIS_FLUSH_EVERY_MS", 10_000),
+    aisFlushMaxSize: positiveNum(env, "AIS_FLUSH_MAX_SIZE", 2000),
     watchlist: parseWatchlist(env),
     scanBoundingBoxes: parseBBox(env),
   };

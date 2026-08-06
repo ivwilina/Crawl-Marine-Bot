@@ -18,7 +18,10 @@ const vesselSchema = new Schema(
     // phân biệt hoa thường (findVesselsByName) vẫn phải scan — MongoDB không
     // dùng index cho regex `i`.
     name: { type: String, index: true },
+    // Loại dạng chữ (trang chi tiết) và mã loại AIS dạng số (AIS) tồn tại song
+    // song: cái đầu để hiển thị, cái sau là `vType` mà contract v3 yêu cầu.
     type: String,
+    aisType: Number,
     callsign: String,
     flagCode: String,
     country: String,
@@ -46,6 +49,9 @@ const positionSchema = new Schema({
   navStatusText: String,
   destination: String,
   eta: String,
+  // Cảng rời gần nhất + giờ rời (ATD), giữ nguyên chữ của trang chi tiết.
+  lastPort: String,
+  lastPortDepartureUtc: String,
   positionTime: String,
   source: String,
   latLonApproximate: Boolean,
@@ -72,6 +78,9 @@ const latestPositionSchema = new Schema({
   navStatusText: String,
   destination: String,
   eta: String,
+  // Cảng rời gần nhất + giờ rời (ATD), giữ nguyên chữ của trang chi tiết.
+  lastPort: String,
+  lastPortDepartureUtc: String,
   positionTime: String,
   source: String,
   latLonApproximate: Boolean,

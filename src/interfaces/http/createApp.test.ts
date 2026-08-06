@@ -255,19 +255,24 @@ test("sends a compact marker payload by default and the full record on request",
     await request(app, "/positions?bbox=103,0.5,105,1.5", { headers: KEY_HEADER })
   ).body as unknown as MapBody;
   assert.deepEqual(Object.keys(compact.positions[0]).sort(), [
+    "aisType",
     "courseDeg",
     "imo",
     "lat",
     "lon",
     "mmsi",
+    "movementState",
     "name",
     "navStatusText",
     "receivedAt",
     "speedKn",
     "type",
+    "typeGroup",
   ]);
   assert.equal(compact.positions[0].name, "MAERSK ALPHA");
   assert.equal(compact.positions[0].imo, "9000001");
+  // Client chọn icon theo typeGroup, không phải tự parse "Container Ship".
+  assert.equal(compact.positions[0].typeGroup, "Cargo");
 
   const full = (
     await request(app, "/positions?bbox=103,0.5,105,1.5&fields=full", { headers: KEY_HEADER })

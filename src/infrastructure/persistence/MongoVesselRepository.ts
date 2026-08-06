@@ -102,47 +102,162 @@ export class MongoVesselRepository implements IVesselRepository {
   /**
    * Vị trí mới nhất của cả mẻ quét trong vài lệnh bulkWrite.
    *
-   * `$set` chỉ những gì mp2 có (toạ độ + nguồn + thời điểm nhận). Các field chỉ
-   * trang chi tiết mới có (course/speed/navStatus/destination) đi vào
-   * `$setOnInsert` để tàu mới vẫn có document đầy đủ, còn tàu đã enrich thì giữ
-   * nguyên giá trị thật.
+   * mp2 chỉ có toạ độ, nên chỉ toạ độ + nguồn + thời điểm nhận được ghi. Các
+   * field chỉ trang chi tiết/AIS mới có (course/speed/navStatus/destination) đi
+   * vào phần "chỉ khi tạo mới" để tàu mới vẫn có document đầy đủ, còn tàu đã
+   * enrich thì giữ nguyên giá trị thật.
    */
   async savePositionsFromScan(positions: VesselPosition[]): Promise<number> {
+    return this._writeGuardedPositions(positions, (position) => {
+      const set: Record<string, unknown> = {
+        lat: position.lat,
+        lon: position.lon,
+        source: position.source,
+        latLonApproximate: position.latLonApproximate,
+        receivedAt: position.receivedAt,
+      };
+
+      // Toạ độ hợp lệ mới ghi `loc`; thiếu thì để nguyên cái cũ cho index 2d.
+      if (position.hasCoordinates()) set.loc = [position.lon, position.lat];
+      // IMO của nguồn quét luôn null -> không xoá IMO mà enrich/AIS đã điền.
+      if (position.imo !== null) set.imo = position.imo;
+
+      return {
+        set,
+        insertOnly: {
+          imo: position.imo,
+          speedKn: null,
+          courseDeg: null,
+          headingDeg: null,
+          navStatusCode: null,
+          navStatusText: position.navStatusText,
+          destination: null,
+          eta: null,
+          lastPort: null,
+          lastPortDepartureUtc: null,
+          positionTime: null,
+        },
+      };
+    });
+  }
+
+  /**
+   * Vị trí từ AIS. Ghi nhiều field hơn scan vì PositionReport mang cả
+   * course/speed/heading/navStatus, nhưng không đụng destination/eta — những
+   * thứ đó chỉ trang chi tiết có.
+   */
+  async savePositionsFromAis(positions: VesselPosition[]): Promise<number> {
+    return this._writeGuardedPositions(positions, (position) => {
+      const set: Record<string, unknown> = {
+        lat: position.lat,
+        lon: position.lon,
+        speedKn: position.speedKn,
+        courseDeg: position.courseDeg,
+        headingDeg: position.headingDeg,
+        navStatusCode: position.navStatusCode,
+        navStatusText: position.navStatusText,
+        source: position.source,
+        latLonApproximate: position.latLonApproximate,
+        receivedAt: position.receivedAt,
+      };
+
+      if (position.hasCoordinates()) set.loc = [position.lon, position.lat];
+      if (position.imo !== null) set.imo = position.imo;
+
+      return {
+        set,
+        insertOnly: {
+          imo: position.imo,
+          destination: null,
+          eta: null,
+          lastPort: null,
+          lastPortDepartureUtc: null,
+          positionTime: null,
+        },
+      };
+    });
+  }
+
+  /**
+   * Định danh từ AIS ShipStaticData: CHỈ điền chỗ trống.
+   *
+   * `$ifNull` là cả ý nghĩa của hàm này — giá trị đang có luôn thắng, nên một
+   * bản ghi đã qua enrich (type dạng chữ, tên sạch) không bị AIS ghi đè, còn
+   * tàu mới quét thì được nối `imo` và `aisType` mà mp2 không bao giờ có.
+   */
+  async upsertVesselsFromAis(vessels: Vessel[]): Promise<number> {
+    let written = 0;
+
+    for (const batch of chunked(vessels, BULK_CHUNK)) {
+      const ops = batch.map((vessel) => ({
+        updateOne: {
+          filter: { mmsi: vessel.mmsi },
+          update: [
+            {
+              $set: {
+                imo    : { $ifNull: ["$imo", vessel.imo] },
+                aisType: { $ifNull: ["$aisType", vessel.aisType] },
+                name   : { $ifNull: ["$name", vessel.name] },
+              },
+            },
+          ],
+          upsert: true,
+        },
+      }));
+
+      if (ops.length === 0) continue;
+
+      const result = await VesselModel.bulkWrite(ops, { ordered: false });
+      written += (result.upsertedCount ?? 0) + (result.modifiedCount ?? 0);
+    }
+
+    return written;
+  }
+
+  /**
+   * Ghi vị trí theo mẻ, không bao giờ ghi đè bản ghi MỚI HƠN.
+   *
+   * Dùng aggregation-pipeline update thay vì `$set`/`$setOnInsert` vì hai lý do
+   * không thể tránh: điều kiện "chỉ ghi khi mới hơn" phải nằm TRONG lệnh ghi để
+   * còn nguyên tính nguyên tử (đọc rồi so rồi ghi là một race), mà nếu đưa điều
+   * kiện đó vào `filter` thì upsert sẽ INSERT một document thứ hai khi bản ghi
+   * hiện có mới hơn — và đụng unique index `mmsi`.
+   *
+   * Thứ tự trong `$mergeObjects` chính là thứ tự ưu tiên: default lúc tạo mới
+   * (thấp nhất) -> document hiện có -> dữ liệu mới (chỉ khi mới hơn).
+   */
+  private async _writeGuardedPositions(
+    positions: VesselPosition[],
+    build: (position: VesselPosition) => { set: Record<string, unknown>; insertOnly: Record<string, unknown> }
+  ): Promise<number> {
     let written = 0;
 
     for (const batch of chunked(positions, BULK_CHUNK)) {
       const ops = batch
         .filter((position) => position.mmsi !== null)
         .map((position) => {
-          const set: Record<string, unknown> = {
-            lat: position.lat,
-            lon: position.lon,
-            source: position.source,
-            latLonApproximate: position.latLonApproximate,
-            receivedAt: position.receivedAt,
-          };
-          const setOnInsert: Record<string, unknown> = {
-            speedKn: null,
-            courseDeg: null,
-            headingDeg: null,
-            navStatusCode: null,
-            navStatusText: position.navStatusText,
-            destination: null,
-            eta: null,
-            positionTime: null,
-          };
+          const { set, insertOnly } = build(position);
 
-          // Toạ độ hợp lệ mới ghi `loc`; thiếu thì để nguyên cái cũ cho index 2d.
-          if (position.hasCoordinates()) set.loc = [position.lon, position.lat];
-          // IMO của nguồn quét luôn null -> chỉ đặt lúc tạo mới, không xoá IMO
-          // mà enrich đã điền.
-          if (position.imo !== null) set.imo = position.imo;
-          else setOnInsert.imo = null;
+          // Chưa có `receivedAt` = document vừa do upsert tạo ra.
+          const isNew = { $eq: [{ $type: "$receivedAt" }, "missing"] };
+          const isFresher = {
+            $or: [isNew, { $lte: ["$receivedAt", position.receivedAt] }],
+          };
 
           return {
             updateOne: {
               filter: { mmsi: position.mmsi },
-              update: { $set: set, $setOnInsert: setOnInsert },
+              update: [
+                {
+                  $replaceWith: {
+                    $mergeObjects: [
+                      { $cond: [isNew, insertOnly, {}] },
+                      "$$ROOT",
+                      { $cond: [isFresher, set, {}] },
+                    ],
+                  },
+                },
+              ],
               upsert: true,
             },
           };
@@ -320,6 +435,7 @@ export class MongoVesselRepository implements IVesselRepository {
       mmsi: d.mmsi,
       name: d.name,
       type: d.type,
+      aisType: d.aisType,
       callsign: d.callsign,
       flagCode: d.flagCode,
       country: d.country,
@@ -347,6 +463,8 @@ export class MongoVesselRepository implements IVesselRepository {
       navStatusText: doc.navStatusText,
       destination: doc.destination,
       eta: doc.eta,
+      lastPort: doc.lastPort,
+      lastPortDepartureUtc: doc.lastPortDepartureUtc,
       positionTime: doc.positionTime,
       source: doc.source as VesselPosition["source"],
       latLonApproximate: doc.latLonApproximate ?? false,

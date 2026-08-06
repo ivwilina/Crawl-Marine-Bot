@@ -4,7 +4,11 @@
 //  Tách riêng khỏi Vessel: đây là dữ liệu time-series, ghi rất nhiều.
 // ============================================================================
 
-export type PositionSource = "vesselfinder" | "unknown";
+/**
+ * Vị trí đến từ đâu. Bên tiêu thụ cần biết: "vesselfinder" qua mp2 là toạ độ
+ * chính xác nhưng có thể cũ hàng giờ, còn "ais" là realtime.
+ */
+export type PositionSource = "vesselfinder" | "ais" | "unknown";
 
 export interface VesselPositionProps {
   imo?: string | number | null;
@@ -18,6 +22,14 @@ export interface VesselPositionProps {
   navStatusText?: string | null;
   destination?: string | null;
   eta?: string | null;
+  /** Cảng rời gần nhất, vd "Singapore Anch. 4, Singapore". */
+  lastPort?: string | null;
+  /**
+   * Giờ rời cảng đó (ATD), giữ NGUYÊN chữ của trang: "Aug 3, 22:23 UTC".
+   * Định dạng không được tài liệu hoá; tự đoán rồi convert là làm hỏng dữ liệu
+   * trong im lặng, giống lý do `eta` cũng để nguyên.
+   */
+  lastPortDepartureUtc?: string | null;
   positionTime?: string | null;
   source?: PositionSource;
   /** true nếu lat/lon bị làm tròn (VesselFinder miễn phí) */
@@ -38,6 +50,8 @@ export class VesselPosition {
   readonly navStatusText: string;
   readonly destination: string | null;
   readonly eta: string | null;
+  readonly lastPort: string | null;
+  readonly lastPortDepartureUtc: string | null;
   readonly positionTime: string | null;
   readonly source: PositionSource;
   readonly latLonApproximate: boolean;
@@ -60,6 +74,8 @@ export class VesselPosition {
     this.navStatusText = props.navStatusText ?? "Unknown";
     this.destination = props.destination ?? null;
     this.eta = props.eta ?? null;
+    this.lastPort = props.lastPort ?? null;
+    this.lastPortDepartureUtc = props.lastPortDepartureUtc ?? null;
     this.positionTime = props.positionTime ?? null;
     this.source = props.source ?? "unknown";
     this.latLonApproximate = props.latLonApproximate ?? false;

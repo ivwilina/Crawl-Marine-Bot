@@ -73,26 +73,88 @@ export class JsonFileVesselRepository implements IVesselRepository {
 
   /** Cả mẻ trong 1 lần đọc + 1 lần ghi; giữ nguyên course/speed đã enrich. */
   async savePositionsFromScan(positions: VesselPosition[]): Promise<number> {
+    return this._writeGuardedPositions(positions, (position, existing) => ({
+      ...existing,
+      imo: position.imo ?? existing.imo,
+      lat: position.lat,
+      lon: position.lon,
+      source: position.source,
+      latLonApproximate: position.latLonApproximate,
+      receivedAt: position.receivedAt,
+    }));
+  }
+
+  /** AIS mang thêm course/speed/heading/navStatus; destination/eta giữ nguyên. */
+  async savePositionsFromAis(positions: VesselPosition[]): Promise<number> {
+    return this._writeGuardedPositions(positions, (position, existing) => ({
+      ...existing,
+      imo: position.imo ?? existing.imo,
+      lat: position.lat,
+      lon: position.lon,
+      speedKn: position.speedKn,
+      courseDeg: position.courseDeg,
+      headingDeg: position.headingDeg,
+      navStatusCode: position.navStatusCode,
+      navStatusText: position.navStatusText,
+      source: position.source,
+      latLonApproximate: position.latLonApproximate,
+      receivedAt: position.receivedAt,
+    }));
+  }
+
+  /** Chỉ điền chỗ trống — giá trị đang có luôn thắng. */
+  async upsertVesselsFromAis(vessels: Vessel[]): Promise<number> {
+    const stored = this.read<Record<string, Record<string, unknown>>>(this.vesselsFile);
+    const now = new Date().toISOString();
+    let written = 0;
+
+    for (const vessel of vessels) {
+      const existing = stored[vessel.mmsi];
+      if (!existing) {
+        stored[vessel.mmsi] = { ...vessel, updatedAt: now };
+        written += 1;
+        continue;
+      }
+
+      const filled = {
+        ...existing,
+        imo: existing.imo ?? vessel.imo,
+        aisType: existing.aisType ?? vessel.aisType,
+        name: existing.name ?? vessel.name,
+      };
+
+      if (
+        filled.imo !== existing.imo ||
+        filled.aisType !== existing.aisType ||
+        filled.name !== existing.name
+      ) {
+        stored[vessel.mmsi] = { ...filled, updatedAt: now };
+        written += 1;
+      }
+    }
+
+    if (written > 0) this.write(this.vesselsFile, stored);
+    return written;
+  }
+
+  /** Bỏ qua bản ghi CŨ HƠN cái đang có: mp2 và AIS cùng ghi vào file này. */
+  private async _writeGuardedPositions(
+    positions: VesselPosition[],
+    merge: (position: VesselPosition, existing: VesselPosition) => ConstructorParameters<typeof VesselPosition>[0]
+  ): Promise<number> {
     const stored = this.read<VesselPosition[]>(this.latestPositionsFile);
     const byMmsi = new Map(stored.map((p) => [p.mmsi, p]));
     let written = 0;
 
     for (const position of positions) {
       if (position.mmsi === null) continue;
+
       const existing = byMmsi.get(position.mmsi);
+      if (existing && existing.receivedAt > position.receivedAt) continue;
+
       byMmsi.set(
         position.mmsi,
-        existing
-          ? new VesselPosition({
-              ...existing,
-              imo: position.imo ?? existing.imo,
-              lat: position.lat,
-              lon: position.lon,
-              source: position.source,
-              latLonApproximate: position.latLonApproximate,
-              receivedAt: position.receivedAt,
-            })
-          : position
+        existing ? new VesselPosition(merge(position, existing)) : position
       );
       written += 1;
     }

@@ -77,6 +77,10 @@ export class EnrichVesselTypes {
             navStatusText: details.position.navStatusText,
             destination: details.position.destination,
             eta: details.position.eta,
+            // Trang chi tiết là nguồn DUY NHẤT có cảng rời + ATD; quên mang qua
+            // là mất chúng, vì bản ghi này ghi đè bản cũ.
+            lastPort: details.position.lastPort,
+            lastPortDepartureUtc: details.position.lastPortDepartureUtc,
             positionTime: details.position.positionTime,
             source: "vesselfinder",
             latLonApproximate: existing ? existing.latLonApproximate : details.position.latLonApproximate,

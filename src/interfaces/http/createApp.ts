@@ -23,6 +23,7 @@ import { ManageWatchlist } from "../../application/use-cases/ManageWatchlist";
 import { IVesselRepository } from "../../application/ports/IVesselRepository";
 import { BoundingBox, distanceNm } from "../../application/ports/Geo";
 import { Errors, errorStatus } from "../../domain/errors/AppError";
+import { movementState, typeGroupOf } from "../../domain/vesselType";
 
 export interface HttpAppDeps {
   getVesselDetails: GetVesselDetails;
@@ -135,18 +136,24 @@ export function createApp(deps: HttpAppDeps): express.Express {
   const guard = requireApiKey(deps.apiKey);
 
   /**
-   * `mmsi` -> lấy vị trí mới nhất của tàu đó làm tâm; hoặc `lat`+`lon` trực tiếp.
-   * Tàu chưa từng được quét thì không có tâm -> 404, chứ không lặng lẽ trả rỗng.
+   * `vessel` (IMO hoặc MMSI) -> lấy vị trí mới nhất của tàu đó làm tâm; hoặc
+   * `lat`+`lon` trực tiếp. Tàu chưa từng được quét thì không có tâm -> 404, chứ
+   * không lặng lẽ trả rỗng.
+   *
+   * Nhận IMO chứ không chỉ MMSI: mọi luồng v3 đều cho phép cả hai, và tâm phải
+   * tra được bằng đúng cái id mà client đang có. `mmsi=` giữ lại như bí danh.
    */
   const resolveCenter = async (
     req: Request
   ): Promise<NearbyCenter | { error: string; status: number }> => {
-    const mmsi = String(req.query.mmsi ?? "").trim();
+    const id = String(req.query.vessel ?? req.query.mmsi ?? "").trim();
 
-    if (mmsi.length > 0) {
+    if (id.length > 0) {
+      const vessel = await deps.repository.findVesselByImoOrMmsi(id);
+      const mmsi = vessel?.mmsi ?? id;
       const position = await deps.repository.getLatestPosition(mmsi);
       if (!position || position.lat === null || position.lon === null) {
-        return { error: `Chưa có vị trí đã crawl cho mmsi ${mmsi}.`, status: 404 };
+        return { error: `Chưa có vị trí đã crawl cho ${id}.`, status: 404 };
       }
       return { lat: position.lat, lon: position.lon, mmsi };
     }
@@ -173,7 +180,13 @@ export function createApp(deps: HttpAppDeps): express.Express {
   app.get("/vessel/:id", guard, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await deps.getVesselDetails.execute(String(req.params.id));
-      res.json(result);
+      // Trả kèm 2 field dẫn xuất như các endpoint map: bảng tra AIS chỉ nằm ở
+      // repo này, nên bên tiêu thụ không phải nhân bản nó để tự phân nhóm.
+      res.json({
+        ...result,
+        typeGroup: typeGroupOf(result.vessel),
+        movementState: movementState(result.position),
+      });
     } catch (err) {
       next(err); // đẩy sang error handler bên dưới
     }
@@ -245,11 +258,18 @@ export function createApp(deps: HttpAppDeps): express.Express {
           imo: p.imo ?? v?.imo ?? null,
           name: v?.name ?? null,
           type: v?.type ?? null,
+          // Mã loại AIS dạng số — chỉ AIS mới có, và là thứ contract v3 gọi là
+          // `vType`. Giữ song song với `type` dạng chữ, không quy đổi một chiều.
+          aisType: v?.aisType ?? null,
+          // Nhóm đã chuẩn hoá: client chọn icon/màu theo field này, không phải
+          // tự đoán từ `type` (chữ của crawler và số của AIS khác nhau).
+          typeGroup: typeGroupOf(v ?? {}),
           lat: p.lat,
           lon: p.lon,
           courseDeg: p.courseDeg,
           speedKn: p.speedKn,
           navStatusText: p.navStatusText,
+          movementState: movementState(p),
           receivedAt: p.receivedAt,
         };
 
@@ -316,12 +336,18 @@ export function createApp(deps: HttpAppDeps): express.Express {
         center: { lat: center.lat, lon: center.lon, mmsi: center.mmsi ?? null },
         radiusNm,
         count: nearby.length,
-        vessels: nearby.map((p) => ({
-          ...p,
-          name: byMmsi.get(p.mmsi ?? "")?.name ?? null,
-          imo: p.imo ?? byMmsi.get(p.mmsi ?? "")?.imo ?? null,
-          type: byMmsi.get(p.mmsi ?? "")?.type ?? null,
-        })),
+        vessels: nearby.map((p) => {
+          const v = byMmsi.get(p.mmsi ?? "");
+          return {
+            ...p,
+            name: v?.name ?? null,
+            imo: p.imo ?? v?.imo ?? null,
+            type: v?.type ?? null,
+            aisType: v?.aisType ?? null,
+            typeGroup: typeGroupOf(v ?? {}),
+            movementState: movementState(p),
+          };
+        }),
       });
     } catch (err) {
       next(err);
@@ -349,6 +375,8 @@ export function createApp(deps: HttpAppDeps): express.Express {
           imo: v.imo,
           name: v.name,
           type: v.type,
+          aisType: v.aisType,
+          typeGroup: typeGroupOf(v),
           flag: v.country,
           callsign: v.callsign,
         })),

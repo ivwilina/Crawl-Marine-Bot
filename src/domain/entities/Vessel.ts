@@ -10,7 +10,16 @@ export interface VesselProps {
   mmsi: string | number | null; // KHÓA CHÍNH (AIS) — nguồn scan luôn có
   imo?: string | number | null; // thuộc tính, có thể thiếu (tàu nội địa)
   name?: string | null;
+  /** Loại cụ thể dạng CHỮ từ trang chi tiết, vd "Crude Oil Tanker". */
   type?: string | null;
+  /**
+   * Mã loại AIS dạng SỐ (0-99), chỉ AIS mới có.
+   *
+   * Giữ riêng khỏi `type` chứ không quy đổi: `type` là chữ do người đọc, còn mã số
+   * là thứ contract v3 (`basics.vType`) yêu cầu. Quy đổi một chiều rồi bỏ mã gốc là
+   * mất dữ liệu không lấy lại được.
+   */
+  aisType?: number | null;
   callsign?: string | null;
   flagCode?: string | null;
   country?: string | null;
@@ -28,6 +37,7 @@ export class Vessel {
   readonly imo: string | null;
   readonly name: string | null;
   readonly type: string | null;
+  readonly aisType: number | null;
   readonly callsign: string | null;
   readonly flagCode: string | null;
   readonly country: string | null;
@@ -51,6 +61,7 @@ export class Vessel {
     this.imo = props.imo != null ? String(props.imo) : null;
     this.name = props.name ?? null;
     this.type = props.type ?? null;
+    this.aisType = props.aisType ?? null;
     this.callsign = props.callsign ?? null;
     this.flagCode = props.flagCode ?? null;
     this.country = props.country ?? null;

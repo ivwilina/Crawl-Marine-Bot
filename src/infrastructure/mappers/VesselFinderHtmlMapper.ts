@@ -1,22 +1,30 @@
 // ============================================================================
 //  INFRASTRUCTURE · Mapper: HTML trang chi tiết VesselFinder -> Entity Domain
 // ----------------------------------------------------------------------------
-//  Nguồn dữ liệu trong HTML:
-//    1) <div id="djson" data-json='{...}'>  -> ship_lat/lon/cog/sog (JSON)
-//    2) Bảng <td class="n3">nhãn</td><td class="v3">giá trị</td> -> lý lịch
-//    3) <h1 class="title">Tên tàu</h1>
+//  Trang dùng BỐN cấu trúc khác nhau, không phải một. Đã đối chiếu HTML thật của
+//  IMO 9384198 và 9811983 (fixture trong ./fixtures):
 //
-//  Trang có HAI bảng n3/v3 và cùng một dữ liệu xuất hiện ở cả hai với nhãn
-//  KHÁC NHAU (đã kiểm chứng trên trang thật, IMO 9384198):
-//    • "Voyage Data"        : Destination, ETA, Course / Speed, Current draught,
-//                             Navigation Status, Position received, IMO / MMSI,
-//                             Callsign, AIS Type, AIS Flag, Length / Beam, Last Port
-//    • "Vessel Particulars" : IMO number, Vessel Name, Ship Type, Flag,
-//                             Year of Build, Length Overall (m), Beam (m),
-//                             Gross Tonnage, Deadweight (t)
-//  parseTable() gộp cả hai vào 1 map, nên chỗ nào có 2 nguồn thì ưu tiên bản
-//  CHÍNH XÁC HƠN: "Ship Type" ("Crude Oil Tanker") hơn "AIS Type" ("Tanker"),
-//  "Length Overall (m)" (333.00) hơn "Length / Beam" (333).
+//    1) <div id="djson" data-json='{...}'>          -> lat/lon/cog/sog (JSON)
+//    2) <td class="n3">nhãn</td><td class="v3">…</td>
+//       bảng AIS/voyage: IMO / MMSI, Callsign, AIS Type, AIS Flag,
+//       Length / Beam, Current draught, Navigation Status, Position received,
+//       Course / Speed, Predicted ETA, Distance / Time
+//    3) <table class="tpt1"><td class="tpc1">nhãn</td><td class="tpc2">…</td>
+//       bảng "Vessel Particulars" (9 bảng nhỏ): IMO number, Vessel Name,
+//       Ship Type, Flag, Year of Build, Length Overall (m), Beam (m),
+//       Gross Tonnage, Net Tonnage, Deadweight (t), TEU…
+//    4) <div class="vilabel">Destination|Last Port</div> + phần tử kế
+//       KHÔNG phải bảng: giá trị nằm trong <a> hoặc <div>, còn ETA/ATD nằm
+//       trong khối "_value" sau đó.
+//
+//  (2) và (3) không trùng nhãn nên được gộp vào một map; chỗ nào có hai nguồn
+//  thì `pick()` xếp bản CHÍNH XÁC HƠN lên trước: "Ship Type" ("Crude Oil
+//  Tanker") hơn "AIS Type" ("Tanker"), "Length Overall (m)" (333.00) hơn
+//  "Length / Beam" (333).
+//
+//  ⚠️ (4) neo vào CHỮ của nhãn, không vào class: `_3-Yih`, `_npNa`, `_value`,
+//  `_mcol12ext` là class sinh tự động khi build lại site, còn chữ "Destination"
+//  và "Last Port" thì không.
 //
 //  ⚠️ lat/lon trong #djson bị LÀM TRÒN về số nguyên (sai số ~111km) khi chưa
 //  đăng nhập. cog/sog thì chính xác. Ta đánh dấu latLonApproximate=true.
@@ -57,15 +65,91 @@ function parseDjson(html: string): DJson {
   }
 }
 
-function parseTable(html: string): Record<string, string> {
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Đọc một bảng nhãn/giá trị theo class của 2 ô.
+ *
+ * Nhận tên class thay vì hard-code "n3"/"v3" vì trang có HAI bảng cấu trúc khác
+ * nhau: AIS/voyage dùng n3/v3, còn Vessel Particulars dùng tpc1/tpc2. Trước đây
+ * mapper chỉ đọc n3/v3 nên toàn bộ tonnage/năm đóng luôn rỗng.
+ *
+ * Nhãn có thể chứa tag (`Deadweight <small>(t)</small>`) nên nó cũng đi qua
+ * stripTags -> "Deadweight (t)".
+ */
+function parseLabelledTable(html: string, labelClass: string, valueClass: string): Record<string, string> {
   const rows: Record<string, string> = {};
-  const re =
-    /<td class="n3">([\s\S]*?)<\/td>\s*<td[^>]*class="v3[^"]*"[^>]*>([\s\S]*?)<\/td>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null) {
-    rows[stripTags(m[1])] = stripTags(m[2]);
+  const re = new RegExp(
+    `<td class="${labelClass}">([\\s\\S]*?)</td>\\s*<td[^>]*class="${valueClass}[^"]*"[^>]*>([\\s\\S]*?)</td>`,
+    "gi"
+  );
+
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(html)) !== null) {
+    rows[stripTags(match[1])] = stripTags(match[2]);
   }
   return rows;
+}
+
+/** Một khối voyage: giá trị chính + mốc thời gian đi kèm (ETA hoặc ATD). */
+interface VoyageBlock {
+  value: string | null;
+  time: string | null;
+}
+
+/**
+ * Số ký tự đọc sau nhãn `vilabel` trước khi cắt. Phải đủ rộng để chứa cả giá trị
+ * và khối `_value` chứa ETA/ATD (thực tế ~250 ký tự), nhưng vẫn có chặn trên để
+ * một trang đổi form không khiến parser quét cả tài liệu.
+ */
+const VOYAGE_BLOCK_WINDOW = 600;
+
+/**
+ * Đọc khối `vilabel` — Destination và Last Port KHÔNG nằm trong bảng nào.
+ *
+ * Hình dạng thật, hai biến thể (giá trị là link cảng, hoặc chữ tự do):
+ *   <div class="vilabel">Destination</div>
+ *     <div class="_3-Yih">FOR ORDERS</div>
+ *     <div class="_value"><span>ETA: Aug 10, 02:00</span><span>(in 4 days)</span></div>
+ *   <div class="vilabel">Last Port</div>
+ *     <a class="_npNa" href="/ports/SGSIN001">Singapore Anch. 4, Singapore</a>
+ *     <div class="_value">ATD: Aug 3, 22:23 UTC <span>(2 days ago)</span></div>
+ *
+ * Cách bóc, chọn để không phụ thuộc class sinh tự động:
+ * - Lấy một cửa sổ cố định sau nhãn rồi CẮT TRONG CODE ở nhãn `vilabel` kế tiếp
+ *   hoặc `</section>`. Không dùng lookahead trong regex: mốc chặn khi đó thành
+ *   bắt buộc, và khối "Destination" có nhãn kế cách xa hơn cửa sổ nên cả match
+ *   thất bại — trả null thay vì cắt tạm. Đã gặp đúng lỗi này.
+ * - Phải cắt, vì khối "Last Port" không có nhãn nào phía sau và sẽ ngoạm cả chữ
+ *   của section kế ("Ship positions").
+ * - Mốc thời gian lấy bằng `[^(<]+` sau "ETA:"/"ATD:" nên tự dừng trước tag và
+ *   trước phần tương đối trong ngoặc — "(in 4 days)" đổi mỗi ngày, giữ nó lại
+ *   thì mỗi request sẽ thấy dữ liệu "khác" dù chẳng có gì thay đổi.
+ * - Giá trị là phần chữ TRƯỚC mốc thời gian, nên mọi thứ phía sau đều bị loại.
+ */
+function parseVoyageBlock(html: string, label: string): VoyageBlock {
+  const anchor = html.match(
+    new RegExp(`class="vilabel"[^>]*>\\s*${escapeRegExp(label)}\\s*</div>`, "i")
+  );
+  if (!anchor || anchor.index === undefined) return { value: null, time: null };
+
+  const start = anchor.index + anchor[0].length;
+  let block = html.slice(start, start + VOYAGE_BLOCK_WINDOW);
+
+  for (const boundary of ['class="vilabel"', "</section"]) {
+    const at = block.indexOf(boundary);
+    if (at >= 0) block = block.slice(0, at);
+  }
+
+  const timeMatch = block.match(/\b(?:ETA|ATD):\s*([^(<]+)/i);
+  const value = stripTags(timeMatch ? block.slice(0, timeMatch.index) : block);
+
+  return {
+    value: value && value !== "-" ? value : null,
+    time: timeMatch?.[1].trim() || null,
+  };
 }
 
 /** Giá trị đầu tiên có thật trong bảng, theo thứ tự nhãn ưu tiên. */
@@ -96,7 +180,14 @@ function pickNumber(tbl: Record<string, string>, ...labels: string[]): number | 
 export class VesselFinderHtmlMapper {
   static toDomain(html: string): VesselDetails {
     const dj = parseDjson(html);
-    const tbl = parseTable(html);
+    // Hai bảng, hai bộ class, không trùng nhãn -> gộp làm một map để `pick()`
+    // xếp thứ tự ưu tiên bằng danh sách nhãn của nó.
+    const tbl = {
+      ...parseLabelledTable(html, "n3", "v3"),
+      ...parseLabelledTable(html, "tpc1", "tpc2"),
+    };
+    const destination = parseVoyageBlock(html, "Destination");
+    const lastPort = parseVoyageBlock(html, "Last Port");
 
     const nameMatch = html.match(/<h1 class="title">([\s\S]*?)<\/h1>/i);
     const name = nameMatch ? stripTags(nameMatch[1]) : null;
@@ -148,10 +239,12 @@ export class VesselFinderHtmlMapper {
       speedKn: typeof dj.ship_sog === "number" ? dj.ship_sog : null,
       courseDeg: typeof dj.ship_cog === "number" ? dj.ship_cog : null,
       navStatusText: pick(tbl, "Navigation Status") ?? "Unknown",
-      destination: pick(tbl, "Destination"),
-      // Giữ nguyên chữ của trang ("Aug 10, 02:00 (in 5 days)"): định dạng không
-      // được tài liệu hoá, tự đoán rồi convert là làm hỏng dữ liệu trong im lặng.
-      eta: pick(tbl, "ETA"),
+      destination: destination.value,
+      // Giữ nguyên chữ của trang ("Aug 10, 02:00"): định dạng không được tài
+      // liệu hoá, tự đoán rồi convert là làm hỏng dữ liệu trong im lặng.
+      eta: destination.time,
+      lastPort: lastPort.value,
+      lastPortDepartureUtc: lastPort.time,
       positionTime: dj.lrpd?.trim() || pick(tbl, "Position received"),
       source: "vesselfinder",
       latLonApproximate: hasLatLon, // toạ độ VF miễn phí bị làm tròn!

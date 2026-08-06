@@ -10,6 +10,7 @@
     "crawl": "ts-node src/interfaces/cli/crawlOnce.ts",
     "scan": "ts-node src/interfaces/cli/scanArea.ts",
     "enrich": "ts-node src/interfaces/cli/enrichTypes.ts",
+    "ais": "ts-node src/interfaces/cli/aisStream.ts",
     "audit": "ts-node src/interfaces/cli/auditData.ts",
     "check-drift": "ts-node src/interfaces/cli/detectHtmlDrift.ts",
     "test": "node -r ts-node/register --test \"src/**/*.test.ts\"",
@@ -23,11 +24,13 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "ioredis": "^5.11.1",
-    "mongoose": "^9.7.3"
+    "mongoose": "^9.7.3",
+    "ws": "^8.21.2"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.0"
   },

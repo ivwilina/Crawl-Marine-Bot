@@ -33,9 +33,37 @@ export interface IVesselRepository {
    * Chỉ đặt các field nguồn quét thực sự có (toạ độ, nguồn, thời điểm nhận);
    * course/speed/navStatus do EnrichVesselTypes điền được GIỮ NGUYÊN.
    *
+   * KHÔNG ghi đè bản ghi mới hơn: từ khi có AIS thì mp2 và AIS cùng ghi vào
+   * latest_positions, và một mẻ scan đang trên đường ghi có thể tới sau một
+   * message AIS mới hơn. Ghi mù sẽ đẩy tàu lùi về quá khứ trên bản đồ.
+   *
    * @returns số bản ghi đã tạo mới hoặc cập nhật
    */
   savePositionsFromScan(positions: VesselPosition[]): Promise<number>;
+  /**
+   * Ghi 1 MẺ vị trí từ AIS (PositionReport).
+   *
+   * AIS mang nhiều hơn mp2 — có cả course/speed/heading/navStatus — nên nó đặt
+   * cả những field đó, nhưng vẫn không đụng lý lịch và vẫn theo đúng luật
+   * "không ghi đè bản ghi mới hơn" như `savePositionsFromScan`.
+   *
+   * @returns số bản ghi đã tạo mới hoặc cập nhật
+   */
+  savePositionsFromAis(positions: VesselPosition[]): Promise<number>;
+  /**
+   * Ghi 1 MẺ định danh từ AIS (ShipStaticData).
+   *
+   * Đây là nguồn DUY NHẤT nối `imo` với `mmsi` ở quy mô lớn: mp2 không có imo,
+   * còn tra trang chi tiết chỉ được ~4.300 tàu/ngày. Nó cũng là nguồn duy nhất
+   * của mã loại AIS dạng số (`aisType`), thứ mà contract v3 gọi là `vType`.
+   *
+   * Chỉ ĐIỀN chỗ trống, không ghi đè: `type` dạng chữ từ trang chi tiết cụ thể
+   * hơn mã số, và tên ở đó cũng sạch hơn tên trong AIS (hay bị viết hoa và
+   * kèm ký tự đệm).
+   *
+   * @returns số bản ghi đã tạo mới hoặc được điền thêm
+   */
+  upsertVesselsFromAis(vessels: Vessel[]): Promise<number>;
   getLatestPosition(mmsi: string): Promise<VesselPosition | null>;
   /**
    * @param freshSince  chỉ trả bản ghi có receivedAt >= mốc này (bỏ vị trí đã

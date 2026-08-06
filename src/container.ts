@@ -19,8 +19,11 @@ import { JsonWatchlistRepository } from "./infrastructure/persistence/JsonWatchl
 import { MongoWatchlistRepository } from "./infrastructure/persistence/MongoWatchlistRepository";
 import { connectMongo } from "./infrastructure/persistence/mongoose/connection";
 
+import { AisStreamSource } from "./infrastructure/datasources/AisStreamSource";
+
 import { GetVesselDetails } from "./application/use-cases/GetVesselDetails";
 import { CrawlFleetPositions } from "./application/use-cases/CrawlFleetPositions";
+import { IngestAisStream } from "./application/use-cases/IngestAisStream";
 import { ScanArea } from "./application/use-cases/ScanArea";
 import { ManageWatchlist } from "./application/use-cases/ManageWatchlist";
 import { EnrichVesselTypes } from "./application/use-cases/EnrichVesselTypes";
@@ -38,6 +41,8 @@ export interface Container {
   manageWatchlist: ManageWatchlist;
   enrichVesselTypes: EnrichVesselTypes;
   cleanupStalePositions: CleanupStalePositions;
+  /** null khi chưa cấu hình AIS_API_KEY — AIS là nguồn phụ, không bắt buộc. */
+  ingestAisStream: IngestAisStream | null;
 }
 
 export async function buildContainer(): Promise<Container> {
@@ -116,6 +121,21 @@ export async function buildContainer(): Promise<Container> {
     staleAfterMs: config.positionStaleAfterMs,
   });
 
+  // AIS: nguồn PHỤ, chỉ dựng khi có khoá. Worker riêng (`npm run ais`), giống
+  // enrich — không tiến trình nào tự bật nó.
+  const ingestAisStream = config.aisApiKey
+    ? new IngestAisStream({
+        stream: new AisStreamSource(config.aisApiKey),
+        repository,
+        flushEveryMs: config.aisFlushEveryMs,
+        flushMaxSize: config.aisFlushMaxSize,
+      })
+    : null;
+
+  if (!ingestAisStream) {
+    console.log("📡 AIS tắt (đặt AIS_API_KEY để bật nguồn phụ này)");
+  }
+
   return {
     config,
     repository,
@@ -126,5 +146,6 @@ export async function buildContainer(): Promise<Container> {
     manageWatchlist,
     enrichVesselTypes,
     cleanupStalePositions,
+    ingestAisStream,
   };
 }

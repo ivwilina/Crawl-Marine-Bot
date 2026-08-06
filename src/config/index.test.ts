@@ -60,6 +60,10 @@ test("rejects an out-of-range HTTP port", () => {
   assert.throws(() => loadConfig({ PORT: "70000" }), /PORT/);
 });
 
+test("defaults the port to 3100 so it does not collide with soosky-marine-api", () => {
+  assert.equal(loadConfig({}).httpPort, 3100);
+});
+
 test("treats an empty value as absent and uses the fallback", () => {
   const config = loadConfig({ CACHE_TTL_MS: "" });
   assert.equal(config.cacheTtlMs, 60_000);
