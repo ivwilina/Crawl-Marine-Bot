@@ -83,14 +83,22 @@ async function buildHarness(): Promise<Harness> {
 async function buildGeoHarness(): Promise<Express> {
   const repository = new InMemoryVesselRepository();
   const fleet = [
-    { mmsi: "563000001", name: "MAERSK ALPHA", imo: "9000001", lat: 1.01, lon: 103.8 },
-    { mmsi: "563000002", name: "MAERSK BETA", imo: null, lat: 1.1, lon: 103.8 },
-    { mmsi: "563000003", name: "EVER FAR", imo: null, lat: 2.0, lon: 103.8 },
+    // Chỉ tàu đầu có country: nó là tàu đã enrich, 2 tàu sau mô phỏng tàu mới
+    // quét từ mp2 — chưa có lý lịch nên `flag` phải là null chứ không phải "".
+    { mmsi: "563000001", name: "MAERSK ALPHA", imo: "9000001", lat: 1.01, lon: 103.8, country: "Singapore" },
+    { mmsi: "563000002", name: "MAERSK BETA", imo: null, lat: 1.1, lon: 103.8, country: null },
+    { mmsi: "563000003", name: "EVER FAR", imo: null, lat: 2.0, lon: 103.8, country: null },
   ];
 
   for (const ship of fleet) {
     await repository.saveVessel(
-      new Vessel({ mmsi: ship.mmsi, imo: ship.imo, name: ship.name, type: "Container Ship" })
+      new Vessel({
+        mmsi: ship.mmsi,
+        imo: ship.imo,
+        name: ship.name,
+        type: "Container Ship",
+        country: ship.country,
+      })
     );
     await repository.savePositionLatest(
       new VesselPosition({
@@ -257,6 +265,7 @@ test("sends a compact marker payload by default and the full record on request",
   assert.deepEqual(Object.keys(compact.positions[0]).sort(), [
     "aisType",
     "courseDeg",
+    "flag",
     "imo",
     "lat",
     "lon",
@@ -273,6 +282,10 @@ test("sends a compact marker payload by default and the full record on request",
   assert.equal(compact.positions[0].imo, "9000001");
   // Client chọn icon theo typeGroup, không phải tự parse "Container Ship".
   assert.equal(compact.positions[0].typeGroup, "Cargo");
+  // Quốc tịch nằm ngay trên marker: client vẽ cờ mà không phải mở chi tiết.
+  assert.equal(compact.positions[0].flag, "Singapore");
+  // Tàu chưa enrich thì không có lý lịch -> null, không phải chuỗi rỗng.
+  assert.equal(compact.positions[1].flag, null);
 
   const full = (
     await request(app, "/positions?bbox=103,0.5,105,1.5&fields=full", { headers: KEY_HEADER })

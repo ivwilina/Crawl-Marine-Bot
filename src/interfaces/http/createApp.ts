@@ -258,6 +258,12 @@ export function createApp(deps: HttpAppDeps): express.Express {
           imo: p.imo ?? v?.imo ?? null,
           name: v?.name ?? null,
           type: v?.type ?? null,
+          // Quốc tịch dạng TÊN nước ("Singapore"), giống field `flag` của
+          // /vessels — trang chi tiết không có mã ISO nên `flagCode` gần như
+          // luôn null. Lý lịch đã join sẵn ở trên, nên field này không tốn thêm
+          // truy vấn nào; nó nằm trong payload gọn vì client vẽ cờ ngay trên
+          // marker chứ không đợi mở chi tiết.
+          flag: v?.country ?? null,
           // Mã loại AIS dạng số — chỉ AIS mới có, và là thứ contract v3 gọi là
           // `vType`. Giữ song song với `type` dạng chữ, không quy đổi một chiều.
           aisType: v?.aisType ?? null,
@@ -344,6 +350,9 @@ export function createApp(deps: HttpAppDeps): express.Express {
             imo: p.imo ?? v?.imo ?? null,
             type: v?.type ?? null,
             aisType: v?.aisType ?? null,
+            // Cùng field với marker của /positions: bên tiêu thụ dùng chung một
+            // mapper cho cả hai, nên thiếu ở đây là nearby mất cờ.
+            flag: v?.country ?? null,
             typeGroup: typeGroupOf(v ?? {}),
             movementState: movementState(p),
           };
