@@ -32,6 +32,20 @@ const vesselSchema = new Schema(
     deadweight: Number,
     draughtM: Number,
     photoUrl: String,
+    /**
+     * Số lần enrich ĐÃ THỬ tàu này, tăng ở mọi lượt bất kể kết quả.
+     *
+     * Không phải số liệu thống kê — nó là thứ giữ cho hàng đợi enrich tiến lên.
+     * Tàu enrich hỏng (timeout, 404) không được đánh dấu gì khác, nên nếu xếp
+     * hàng theo thứ tự tự nhiên thì mỗi vòng lại bốc đúng những tàu vừa hỏng và
+     * không bao giờ chạm tới phần còn lại. Đếm lượt THỬ chứ không phải lượt HỎNG
+     * vì có tàu tải trang thành công mà trang vẫn không ghi loại — trường hợp đó
+     * cũng không được phép chiếm chỗ mãi.
+     *
+     * Sắp tăng dần -> tàu chưa thử lần nào luôn được ưu tiên, tàu đã thử vẫn
+     * quay lại lượt sau chứ không bị loại vĩnh viễn.
+     */
+    enrichAttempts: { type: Number, default: 0, index: true },
   },
   { timestamps: true } // tự thêm createdAt / updatedAt
 );

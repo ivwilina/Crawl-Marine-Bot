@@ -385,7 +385,12 @@ export class MongoVesselRepository implements IVesselRepository {
 
       // `$and` tường minh: cả hai vế đều có thể là `$or`, và gộp thẳng vào một
       // object thì vế sau ghi đè vế trước — bộ lọc type sẽ biến mất trong im lặng.
+      //
+      // Sắp theo số lượt đã thử: tàu chưa thử lần nào đi trước (field vắng mặt
+      // sắp trước số trong thứ tự tăng dần của MongoDB), nên một tàu hỏng lặp
+      // lại tự lùi xuống thay vì chiếm chỗ mãi.
       const docs = await VesselModel.find({ $and: [missingType, imoFilter] })
+        .sort({ enrichAttempts: 1 })
         .limit(take)
         .lean()
         .exec();
@@ -401,6 +406,15 @@ export class MongoVesselRepository implements IVesselRepository {
       : withImo;
 
     return docs.map(MongoVesselRepository.docToVessel);
+  }
+
+  /**
+   * `$inc` chứ không phải đọc-rồi-ghi: enrich có thể chạy nhiều tiến trình, và
+   * `$inc` là nguyên tử nên hai lượt song song không nuốt mất của nhau.
+   * `upsert: false` — không có tàu thì không có gì để xếp hàng.
+   */
+  async recordEnrichAttempt(mmsi: string): Promise<void> {
+    await VesselModel.updateOne({ mmsi }, { $inc: { enrichAttempts: 1 } });
   }
 
   /**

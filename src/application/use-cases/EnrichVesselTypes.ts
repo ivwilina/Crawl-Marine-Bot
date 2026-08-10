@@ -35,7 +35,34 @@ export interface EnrichVesselTypesDeps {
   batchSize?: number; // số tàu tra mỗi vòng (mặc định 15)
   delayMs?: number; // nghỉ giữa 2 tàu trong 1 vòng (mặc định 2s)
   intervalMs?: number; // nghỉ giữa 2 vòng (mặc định 5 phút)
+  /** Tiêm được để test không phải chờ thật. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/**
+ * Mã lỗi nghĩa là "upstream đang từ chối phục vụ", không phải "tàu này có vấn đề".
+ *
+ * E-2001 là 403/429 nói thẳng. E-2003 là timeout, và nó ở CÙNG nhóm chứ không
+ * phải lỗi vặt: khi một site giữ kết nối rồi không trả, đó thường là cách nó
+ * siết tốc độ mà không tốn công trả về một trang lỗi. Trước đây chỉ E-2001 được
+ * hạ nhiệt, nên đúng lúc bị siết thì worker vẫn nện đều tay.
+ */
+const UPSTREAM_REFUSAL_CODES = new Set(["E-2001", "E-2003"]);
+
+/** Hạ nhiệt lần đầu. Mỗi lần hỏng liên tiếp tiếp theo thì gấp đôi. */
+const COOLDOWN_BASE_MS = 60 * 1000;
+
+/** Trần hạ nhiệt — quá mức này thì chờ thêm cũng không nói lên điều gì mới. */
+const COOLDOWN_MAX_MS = 15 * 60 * 1000;
+
+/**
+ * Hỏng liên tiếp tới ngần này thì BỎ NỐT VÒNG.
+ *
+ * Không có ngưỡng này thì một vòng `batchSize` tàu gặp upstream đang từ chối sẽ
+ * chạy hết cả batch, mỗi tàu tốn trọn hạn timeout — vừa vô ích vừa là thứ khiến
+ * tình hình xấu thêm. Dừng sớm rồi để `intervalMs` nghỉ là phản ứng đúng.
+ */
+const MAX_CONSECUTIVE_FAILURES = 3;
 
 export class EnrichVesselTypes {
   private readonly detailsSource: IVesselDetailsSource;
@@ -43,7 +70,20 @@ export class EnrichVesselTypes {
   private readonly batchSize: number;
   private readonly delayMs: number;
   private readonly intervalMs: number;
-  private running = false;
+  private readonly sleep: (ms: number) => Promise<void>;
+  /**
+   * Chỉ `stop()` bật cờ này. Mặc định false -> `runOnce()` chạy được một mình,
+   * giống `ScanArea.scanOnce()`. Trước đây đây là cờ `running` do `start()` bật,
+   * nên gọi thẳng `runOnce()` sẽ thoát ngay ở tàu đầu tiên mà không báo gì.
+   */
+  private stopped = false;
+
+  /**
+   * Số lượt hỏng-do-upstream liên tiếp. KHÔNG reset ở đầu mỗi vòng: nếu site
+   * đang từ chối thì ranh giới giữa hai vòng chẳng có ý nghĩa gì, và reset ở đó
+   * sẽ khiến mức hạ nhiệt không bao giờ leo lên được.
+   */
+  private consecutiveFailures = 0;
 
   constructor(deps: EnrichVesselTypesDeps) {
     this.detailsSource = deps.detailsSource;
@@ -51,6 +91,7 @@ export class EnrichVesselTypes {
     this.batchSize = deps.batchSize ?? 15;
     this.delayMs = deps.delayMs ?? 2000;
     this.intervalMs = deps.intervalMs ?? 5 * 60 * 1000;
+    this.sleep = deps.sleep ?? EnrichVesselTypes.sleep;
   }
 
   /** Chạy 1 vòng: tra tối đa batchSize tàu thiếu type. Trả số tàu đã bổ sung được. */
@@ -61,10 +102,16 @@ export class EnrichVesselTypes {
     let done = 0;
 
     for (const v of missing) {
-      if (!this.running) break;
+      if (this.stopped) break;
       // KHÓA = mmsi, KHÔNG bao giờ đổi. Enrich chỉ ĐIỀN thêm IMO/type/kích
       // thước vào cùng bản ghi -> không còn cảnh xóa-tạo-lại gây trùng tàu.
       const mmsi = v.mmsi;
+
+      // Đếm TRƯỚC khi gọi mạng: một lượt timeout không tạo ra Vessel nào để lưu,
+      // mà đó đúng là lượt phải được ghi nhận — nếu không, vòng sau lại bốc đúng
+      // con tàu này và hàng đợi đứng yên mãi mãi.
+      await this.repository.recordEnrichAttempt(mmsi);
+
       try {
         const details = await this.detailsSource.getDetails(mmsi);
 
@@ -94,29 +141,56 @@ export class EnrichVesselTypes {
         );
 
         done++;
+        this.consecutiveFailures = 0;
         console.log(
           `   🏷️  ${details.vessel.name ?? mmsi} -> ${details.vessel.type ?? "?"}  ${details.position.courseDeg ?? "?"}°`
         );
       } catch (err) {
         const e = err as { code?: string; message: string };
         console.log(`   ⚠️  ${mmsi}  ${e.message}`);
-        if (e.code === "E-2001") {
-          console.log("   🧊 Bị chặn — tạm nghỉ 5 phút cho hạ nhiệt...");
-          await EnrichVesselTypes.sleep(5 * 60 * 1000);
+
+        if (!UPSTREAM_REFUSAL_CODES.has(e.code ?? "")) {
+          // Lỗi của riêng tàu này (404, trang không bóc được). Không nói lên
+          // điều gì về upstream, nên không hạ nhiệt và không tính vào chuỗi hỏng.
+          this.consecutiveFailures = 0;
+        } else if (await this.coolDown()) {
+          break; // upstream đang từ chối — bỏ nốt vòng
         }
       }
-      await EnrichVesselTypes.sleep(EnrichVesselTypes.jitter(this.delayMs));
+      await this.sleep(EnrichVesselTypes.jitter(this.delayMs));
     }
     return done;
   }
 
+  /**
+   * Hạ nhiệt sau một lượt hỏng do upstream, gấp đôi dần theo số lần liên tiếp.
+   * @returns `true` khi đã hỏng đủ nhiều để bỏ nốt vòng
+   */
+  private async coolDown(): Promise<boolean> {
+    this.consecutiveFailures += 1;
+
+    const wait = Math.min(
+      COOLDOWN_BASE_MS * 2 ** (this.consecutiveFailures - 1),
+      COOLDOWN_MAX_MS
+    );
+    const giveUpRound = this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES;
+
+    console.log(
+      `   🧊 Upstream từ chối (${this.consecutiveFailures} lượt liên tiếp) — nghỉ ${(wait / 1000).toFixed(0)}s` +
+        (giveUpRound ? ", rồi bỏ nốt vòng này." : "...")
+    );
+    await this.sleep(wait);
+
+    return giveUpRound;
+  }
+
   /** Chạy lặp vô hạn (Ctrl+C / stop() để dừng). */
   async start(): Promise<void> {
-    this.running = true;
+    this.stopped = false;
     console.log(
       `🏷️  EnrichVesselTypes: mỗi vòng tra tối đa ${this.batchSize} tàu, nghỉ ${this.intervalMs / 60000} phút giữa các vòng.\n`
     );
-    while (this.running) {
+    while (!this.stopped) {
       try {
         const done = await this.runOnce();
         if (done === 0) {
@@ -125,12 +199,12 @@ export class EnrichVesselTypes {
       } catch (err) {
         console.log(`   ❌ ${(err as Error).message}`);
       }
-      await EnrichVesselTypes.sleep(this.intervalMs);
+      await this.sleep(this.intervalMs);
     }
   }
 
   stop(): void {
-    this.running = false;
+    this.stopped = true;
   }
 
   private static sleep(ms: number): Promise<void> {

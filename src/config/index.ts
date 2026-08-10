@@ -20,6 +20,16 @@ export interface AppConfig {
   httpPort: number;
   /** Khoá bắt buộc cho các route ghi/gọi upstream (header X-API-Key). */
   apiKey: string;
+  /**
+   * Hạn chờ MỘT request lên VesselFinder (ms). Quá hạn -> E-2003 "không phản
+   * hồi kịp". Dùng chung cho trang chi tiết (enrich) và mp2 (quét vùng).
+   *
+   * Nới nó chỉ đúng khi trang thật sự chậm. Timeout xuất hiện HÀNG LOẠT sau một
+   * lúc chạy thường là bị siết tốc độ, và chờ lâu hơn trên một kết nối đang bị
+   * giữ chỉ làm mỗi lần hỏng tốn thời gian hơn — cái cần giảm khi đó là nhịp
+   * (ENRICH_DELAY_MS).
+   */
+  httpTimeoutMs: number;
   cacheTtlMs: number;
   /**
    * Bản ghi đã crawl cũ hơn ngần này thì GET /vessel/:id gọi lại upstream thay
@@ -132,6 +142,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
     httpPort: num(env, "PORT", 3100, { min: 1, max: 65535 }),
     // Không có mặc định: server HTTP tự từ chối khởi động nếu để trống.
     apiKey: str(env, "API_KEY"),
+    // 10s là giá trị trước đây hard-code trong container.ts; giữ làm mặc định
+    // để deployment chưa đặt biến này không đổi hành vi.
+    httpTimeoutMs: positiveNum(env, "HTTP_TIMEOUT_MS", 10_000),
     cacheTtlMs: positiveNum(env, "CACHE_TTL_MS", 60_000),
     // Crawler là nguồn chính: tàu đã enrich và còn tươi thì trả từ kho, không
     // gọi lại VesselFinder.

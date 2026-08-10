@@ -47,7 +47,7 @@ export interface Container {
 
 export async function buildContainer(): Promise<Container> {
   // 1) Adapter hạ tầng
-  const httpClient = new HttpClient({ timeoutMs: 10000 });
+  const httpClient = new HttpClient({ timeoutMs: config.httpTimeoutMs });
   const detailsSource = new VesselFinderHtmlSource(httpClient); // có lat/lon (làm tròn)
 
   // Chọn cache: có REDIS_URL -> Redis, không thì RAM.

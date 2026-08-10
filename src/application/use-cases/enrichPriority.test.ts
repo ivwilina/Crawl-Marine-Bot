@@ -93,6 +93,41 @@ test("kho chỉ có tàu không IMO vẫn được enrich, không bị bỏ đó
   });
 });
 
+test("trong cùng nhóm, tàu đã thử nhiều lần lùi xuống sau tàu chưa thử", async () => {
+  await forEachRepo(async (repo) => {
+    await seedMixed(repo);
+    // BBC UKRAINE đứng đầu (có IMO, chưa thử) — thử 2 lần thì phải nhường chỗ
+    // cho MANIFA, con còn lại trong cùng nhóm.
+    await repo.recordEnrichAttempt("305803000");
+    await repo.recordEnrichAttempt("305803000");
+
+    const batch = await repo.getVesselsMissingType(5);
+
+    assert.deepEqual(
+      batch.map((v) => v.name),
+      ["MANIFA", "BBC UKRAINE", "SATORI", "INN THE RED", "P-520"]
+    );
+  });
+});
+
+test("lượt thử không phá vỡ ưu tiên IMO", async () => {
+  await forEachRepo(async (repo) => {
+    await seedMixed(repo);
+    // Cả hai tàu có IMO đều đã thử nhiều lần; tàu không IMO thì chưa lần nào.
+    for (const mmsi of ["305803000", "403560000"]) {
+      await repo.recordEnrichAttempt(mmsi);
+      await repo.recordEnrichAttempt(mmsi);
+      await repo.recordEnrichAttempt(mmsi);
+    }
+
+    const batch = await repo.getVesselsMissingType(3);
+
+    // Lượt thử chỉ sắp xếp TRONG một nhóm, không đẩy tàu thương mại xuống dưới
+    // tàu giải trí — nếu không, một vùng đầy du thuyền sẽ chiếm hết hàng đợi.
+    assert.ok(batch.slice(0, 2).every((v) => v.imo));
+  });
+});
+
 test("tàu đã có type không bao giờ được trả lại", async () => {
   await forEachRepo(async (repo) => {
     await seedMixed(repo);

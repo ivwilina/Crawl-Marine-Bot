@@ -27,8 +27,15 @@ export class JsonFileVesselRepository implements IVesselRepository {
   }
 
   async saveVessel(vessel: Vessel): Promise<void> {
-    const vessels = this.read<Record<string, unknown>>(this.vesselsFile);
-    vessels[vessel.mmsi] = { ...vessel, updatedAt: new Date().toISOString() };
+    const vessels = this.read<Record<string, Record<string, unknown>>>(this.vesselsFile);
+    // Trải bản ghi cũ ra trước: `Vessel` không mang `enrichAttempts`, nên ghi đè
+    // thẳng sẽ xoá bộ đếm hàng đợi enrich. Bản Mongo dùng `$set` nên giữ nguyên
+    // các field lạ — chỗ này phải làm tay cho khớp ngữ nghĩa đó.
+    vessels[vessel.mmsi] = {
+      ...vessels[vessel.mmsi],
+      ...vessel,
+      updatedAt: new Date().toISOString(),
+    };
     this.write(this.vesselsFile, vessels);
   }
 
@@ -230,14 +237,31 @@ export class JsonFileVesselRepository implements IVesselRepository {
     return (await this.getAllVessels()).filter((v) => set.has(v.mmsi));
   }
 
-  /** Tàu cần enrich, có IMO trước — cùng thứ tự ưu tiên với bản Mongo. */
+  /**
+   * Tàu cần enrich: có IMO trước, trong mỗi nhóm thì ít lượt thử nhất trước.
+   * Cùng thứ tự ưu tiên với bản Mongo.
+   */
   async getVesselsMissingType(limit: number): Promise<Vessel[]> {
+    const stored = this.read<Record<string, Record<string, unknown>>>(this.vesselsFile);
     const missing = (await this.getAllVessels()).filter((v) => !v.type);
+    const attempts = (v: Vessel): number => Number(stored[v.mmsi]?.enrichAttempts ?? 0);
+    // Sắp ổn định: các phần tử bằng điểm giữ nguyên thứ tự chèn.
+    const byAttempts = (group: Vessel[]): Vessel[] =>
+      [...group].sort((a, b) => attempts(a) - attempts(b));
 
     return [
-      ...missing.filter((v) => v.imo),
-      ...missing.filter((v) => !v.imo),
+      ...byAttempts(missing.filter((v) => v.imo)),
+      ...byAttempts(missing.filter((v) => !v.imo)),
     ].slice(0, limit);
+  }
+
+  async recordEnrichAttempt(mmsi: string): Promise<void> {
+    const stored = this.read<Record<string, Record<string, unknown>>>(this.vesselsFile);
+    const existing = stored[mmsi];
+    if (!existing) return;
+
+    stored[mmsi] = { ...existing, enrichAttempts: Number(existing.enrichAttempts ?? 0) + 1 };
+    this.write(this.vesselsFile, stored);
   }
 
   async findVesselByMmsi(mmsi: string): Promise<Vessel | null> {

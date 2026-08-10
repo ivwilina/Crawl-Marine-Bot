@@ -115,8 +115,21 @@ export interface IVesselRepository {
    *
    * Hết tàu có IMO thì tự động lấy tiếp nhóm còn lại cho đủ `limit`, nên vòng
    * enrich không bao giờ chạy không tải khi vẫn còn việc.
+   *
+   * Trong mỗi nhóm, tàu ĐƯỢC THỬ ÍT LẦN NHẤT đứng trước (`recordEnrichAttempt`).
+   * Không có thứ tự đó thì một tàu hỏng đi hỏng lại sẽ chiếm chỗ vĩnh viễn: nó
+   * vẫn thiếu `type` nên vòng sau lại được bốc lên, và hàng đợi đứng yên.
    */
   getVesselsMissingType(limit: number): Promise<Vessel[]>;
+
+  /**
+   * Ghi nhận rằng enrich vừa thử tàu này — gọi ở MỌI lượt, kể cả lượt hỏng.
+   *
+   * Tách khỏi `saveVessel` vì nó phải được ghi cả khi không có gì để lưu: một
+   * lượt timeout không tạo ra `Vessel` nào, mà đó lại chính là lượt cần được
+   * đếm để tàu đó nhường chỗ cho tàu khác.
+   */
+  recordEnrichAttempt(mmsi: string): Promise<void>;
   /**
    * Tìm vessel theo MMSI (không phải IMO). Dùng để kiểm tra 1 mmsi đã được
    * "nâng cấp" lên IMO thật chưa (qua EnrichVesselTypes) trước khi ScanArea

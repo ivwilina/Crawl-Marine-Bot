@@ -15,6 +15,13 @@ export class InMemoryVesselRepository implements IVesselRepository {
   private readonly vessels = new Map<string, Vessel>();
   private readonly latest = new Map<string, VesselPosition>();
   private readonly history: VesselPosition[] = [];
+  /**
+   * Số lượt enrich đã thử, theo mmsi. Để ngoài `Vessel` chứ không thêm field
+   * vào entity: đây là trạng thái vận hành của hàng đợi enrich, không phải một
+   * thuộc tính của con tàu. Nhờ vậy `saveVessel` (thay nguyên object) cũng
+   * không vô tình xoá mất nó.
+   */
+  private readonly enrichAttempts = new Map<string, number>();
 
   async saveVessel(vessel: Vessel): Promise<void> {
     this.vessels.set(vessel.mmsi, vessel);
@@ -203,14 +210,25 @@ export class InMemoryVesselRepository implements IVesselRepository {
     return [...this.vessels.values()].filter((v) => set.has(v.mmsi));
   }
 
-  /** Tàu cần enrich, có IMO trước — cùng thứ tự ưu tiên với bản Mongo. */
+  /**
+   * Tàu cần enrich: có IMO trước, trong mỗi nhóm thì ít lượt thử nhất trước.
+   * Cùng thứ tự ưu tiên với bản Mongo.
+   */
   async getVesselsMissingType(limit: number): Promise<Vessel[]> {
     const missing = [...this.vessels.values()].filter((v) => !v.type);
+    const attempts = (v: Vessel): number => this.enrichAttempts.get(v.mmsi) ?? 0;
+    // Sắp ổn định: các phần tử bằng điểm giữ nguyên thứ tự chèn.
+    const byAttempts = (group: Vessel[]): Vessel[] =>
+      [...group].sort((a, b) => attempts(a) - attempts(b));
 
     return [
-      ...missing.filter((v) => v.imo),
-      ...missing.filter((v) => !v.imo),
+      ...byAttempts(missing.filter((v) => v.imo)),
+      ...byAttempts(missing.filter((v) => !v.imo)),
     ].slice(0, limit);
+  }
+
+  async recordEnrichAttempt(mmsi: string): Promise<void> {
+    this.enrichAttempts.set(mmsi, (this.enrichAttempts.get(mmsi) ?? 0) + 1);
   }
 
   async findVesselsByName(prefix: string, limit: number): Promise<Vessel[]> {
