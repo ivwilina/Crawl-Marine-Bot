@@ -16,6 +16,12 @@
 //  Đây là tra cứu theo từng tàu -> tạo thêm request upstream ngoài area scan.
 //  vùng, nên PHẢI giới hạn tốc độ: batch nhỏ mỗi vòng + nghỉ dài giữa các
 //  vòng + jitter ngẫu nhiên + hạ nhiệt khi bị chặn (403).
+// ----------------------------------------------------------------------------
+//  THỨ TỰ do `getVesselsMissingType` quyết định, và nó trả TÀU CÓ IMO TRƯỚC.
+//  Vì mỗi tàu tốn một request, hàng đợi vài chục nghìn tàu mất nhiều ngày mới
+//  cạn — thứ tự vì thế quyết định app có dữ liệu dùng được sau vài giờ hay phải
+//  đợi hết vòng. Có IMO ≈ tàu thương mại, là thứ người dùng thực sự mở ra xem;
+//  tàu giải trí/nội địa vẫn được enrich, chỉ là sau.
 // ============================================================================
 
 import { IVesselDetailsSource } from "../ports/IVesselDetailsSource";

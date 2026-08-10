@@ -107,6 +107,14 @@ export interface IVesselRepository {
   /**
    * Tối đa `limit` tàu CHƯA có type (cần enrich lý lịch). Query thẳng ở DB,
    * KHÔNG nạp cả triệu vessel vào RAM mỗi vòng enrich.
+   *
+   * TÀU CÓ IMO ĐƯỢC TRẢ TRƯỚC. Enrich tra từng tàu một nên nó là thứ chậm nhất
+   * trong hệ (vài giây/tàu); thứ tự vì thế quyết định app có dữ liệu dùng được
+   * sau vài giờ hay sau vài ngày. Có IMO ≈ tàu thương mại — đó là thứ người dùng
+   * mở ra xem. Không IMO phần lớn là tàu giải trí/nội địa: vẫn enrich, nhưng sau.
+   *
+   * Hết tàu có IMO thì tự động lấy tiếp nhóm còn lại cho đủ `limit`, nên vòng
+   * enrich không bao giờ chạy không tải khi vẫn còn việc.
    */
   getVesselsMissingType(limit: number): Promise<Vessel[]>;
   /**

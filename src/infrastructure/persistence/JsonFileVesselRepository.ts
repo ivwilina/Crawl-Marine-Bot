@@ -230,8 +230,14 @@ export class JsonFileVesselRepository implements IVesselRepository {
     return (await this.getAllVessels()).filter((v) => set.has(v.mmsi));
   }
 
+  /** Tàu cần enrich, có IMO trước — cùng thứ tự ưu tiên với bản Mongo. */
   async getVesselsMissingType(limit: number): Promise<Vessel[]> {
-    return (await this.getAllVessels()).filter((v) => !v.type).slice(0, limit);
+    const missing = (await this.getAllVessels()).filter((v) => !v.type);
+
+    return [
+      ...missing.filter((v) => v.imo),
+      ...missing.filter((v) => !v.imo),
+    ].slice(0, limit);
   }
 
   async findVesselByMmsi(mmsi: string): Promise<Vessel | null> {

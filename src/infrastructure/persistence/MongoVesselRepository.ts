@@ -364,14 +364,43 @@ export class MongoVesselRepository implements IVesselRepository {
     return (docs as unknown as VesselDoc[]).map(MongoVesselRepository.docToVessel);
   }
 
+  /**
+   * Tàu cần enrich, CÓ IMO TRƯỚC.
+   *
+   * Hai truy vấn chứ không phải một `sort`: thứ tự mong muốn là "có imo hay
+   * không", một biểu thức chứ không phải một field, nên `sort` sẽ phải qua
+   * aggregation và không dùng được index nào. Hai `find` với vị ngữ ngược nhau
+   * cho đúng thứ tự đó mà vẫn là truy vấn thường, và lượt thứ hai chỉ chạy khi
+   * lượt đầu không lấp đủ `limit`.
+   */
   async getVesselsMissingType(limit: number): Promise<Vessel[]> {
-    const docs = await VesselModel.find({
-      $or: [{ type: null }, { type: { $exists: false } }, { type: "" }],
-    })
-      .limit(limit)
-      .lean()
-      .exec();
-    return (docs as unknown as VesselDoc[]).map(MongoVesselRepository.docToVessel);
+    if (limit <= 0) return [];
+
+    const missingType = { $or: [{ type: null }, { type: { $exists: false } }, { type: "" }] };
+
+    const fetch = async (hasImo: boolean, take: number): Promise<VesselDoc[]> => {
+      const imoFilter = hasImo
+        ? { imo: { $nin: [null, ""] } }
+        : { $or: [{ imo: null }, { imo: { $exists: false } }, { imo: "" }] };
+
+      // `$and` tường minh: cả hai vế đều có thể là `$or`, và gộp thẳng vào một
+      // object thì vế sau ghi đè vế trước — bộ lọc type sẽ biến mất trong im lặng.
+      const docs = await VesselModel.find({ $and: [missingType, imoFilter] })
+        .limit(take)
+        .lean()
+        .exec();
+
+      return docs as unknown as VesselDoc[];
+    };
+
+    const withImo = await fetch(true, limit);
+    const remaining = limit - withImo.length;
+
+    const docs = remaining > 0
+      ? [...withImo, ...(await fetch(false, remaining))]
+      : withImo;
+
+    return docs.map(MongoVesselRepository.docToVessel);
   }
 
   /**

@@ -203,8 +203,14 @@ export class InMemoryVesselRepository implements IVesselRepository {
     return [...this.vessels.values()].filter((v) => set.has(v.mmsi));
   }
 
+  /** Tàu cần enrich, có IMO trước — cùng thứ tự ưu tiên với bản Mongo. */
   async getVesselsMissingType(limit: number): Promise<Vessel[]> {
-    return [...this.vessels.values()].filter((v) => !v.type).slice(0, limit);
+    const missing = [...this.vessels.values()].filter((v) => !v.type);
+
+    return [
+      ...missing.filter((v) => v.imo),
+      ...missing.filter((v) => !v.imo),
+    ].slice(0, limit);
   }
 
   async findVesselsByName(prefix: string, limit: number): Promise<Vessel[]> {
